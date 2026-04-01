@@ -265,8 +265,15 @@ For new users on Apple Silicon, use two separate conda environments:
 - `proteina` for running `complexa`.
 
 Install Foundry from the Apple Silicon fork: <https://github.com/fnachon/foundry>
+Install Proteina-Complexa from the MPS-enabled fork: <https://github.com/fnachon/Proteina-Complexa>
+Canonical values for this setup are mirrored in `pyproject.toml` under
+`[tool.proteina.installation.macos]`.
 
 ```bash
+# 0) Clone Proteina-Complexa (MPS fork)
+git clone https://github.com/fnachon/Proteina-Complexa
+cd Proteina-Complexa
+
 # 1) Foundry (separate env)
 conda create -n foundry python=3.12 -y
 conda run -n foundry pip install torch
@@ -342,7 +349,7 @@ Keep Complexa running in your dedicated env (for example `proteina`). If RF3 is 
 
 ```bash
 export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
-export RF3_CKPT_PATH=/absolute/path/to/rf3_latest.pt
+export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
 ```
 
 Then run the RF3-enabled preset:
@@ -628,16 +635,11 @@ complexa validate design configs/search_binder_local_pipeline.yaml --verbose
 RF3 requires `RF3_CKPT_PATH` and `RF3_EXEC_PATH` to be set. Add them to your `.env` or export them:
 
 ```bash
-export RF3_CKPT_PATH=/path/to/rf3_latest.pt
-export RF3_EXEC_PATH=/path/to/rf3
-```
-
-Recommended on macOS: keep Foundry in a separate `foundry` env and set:
-
-```bash
 export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
 export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
 ```
+
+This is the recommended macOS setup with a separate `foundry` env.
 
 ### MPS Unavailable (`torch.backends.mps.is_available() == False`)
 

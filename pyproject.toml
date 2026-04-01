@@ -64,6 +64,25 @@ complexa = "proteinfoundation.cli.cli_runner:main"
 complexa-download = "proteinfoundation.cli.cli_runner:download_main"
 complexa-target = "proteinfoundation.cli.target_cli:main"
 
+# Installation guidance metadata (consumed by humans/docs tooling)
+[tool.proteina.installation.macos]
+proteina_repo = "https://github.com/fnachon/Proteina-Complexa"
+runtime_env = "proteina"
+requires_separate_foundry_env = true
+foundry_repo = "https://github.com/fnachon/foundry"
+foundry_env = "foundry"
+install_openbabel_via_conda = true
+openbabel_conda_channel = "conda-forge"
+proteina_clone_command = "git clone https://github.com/fnachon/Proteina-Complexa"
+foundry_install_command = "conda run -n foundry pip install \"rc-foundry[all] @ git+https://github.com/fnachon/foundry.git\""
+foundry_models_command = "conda run -n foundry foundry install base-models"
+complexa_install_command = "conda run -n proteina pip install -e ."
+complexa_init_command = "conda run -n proteina complexa init uv --force"
+complexa_download_command = "conda run -n proteina complexa download --complexa-all"
+openbabel_install_command = "conda install -n proteina -c conda-forge openbabel -y"
+rf3_exec_env_var_example = "RF3_EXEC_PATH=$(conda run -n foundry which rf3)"
+rf3_ckpt_env_var_example = "RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt"
+
 # Build system 
 [build-system]
 requires = ["hatchling"]

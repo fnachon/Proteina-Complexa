@@ -85,7 +85,7 @@ Proteina-Complexa designs have been experimentally validated across diverse prot
 > **Linux note:** Ubuntu 22.04+ is recommended. Ubuntu 20.04 may throw GLIBC errors due to older system libraries.
 
 ```bash
-git clone https://github.com/NVIDIA-Digital-Bio/Proteina-Complexa
+git clone https://github.com/fnachon/Proteina-Complexa
 cd Proteina-Complexa
 
 ./env/build_uv_env.sh
@@ -98,17 +98,22 @@ source .venv/bin/activate
 
 `build_uv_env.sh` auto-detects Apple Silicon and configures a compatible environment (PyTorch with MPS support, no CUDA-only wheel pins, JAX CPU fallback).
 
+For Apple Silicon / MPS runs, install Proteina-Complexa from the MPS-enabled fork:
+<https://github.com/fnachon/Proteina-Complexa>
+
 For first-time setup on macOS, use two separate conda environments:
 
 - `foundry` -- install Foundry (RF3 + ProteinMPNN/LigandMPNN + AtomWorks)
 - `proteina` -- install and run Proteina-Complexa
 
 This separation avoids dependency conflicts and is the recommended setup for Apple Silicon.
+Canonical values for this macOS setup are mirrored in `pyproject.toml` under
+`[tool.proteina.installation.macos]`.
 
 From-scratch setup:
 
 ```bash
-git clone https://github.com/NVIDIA-Digital-Bio/Proteina-Complexa
+git clone https://github.com/fnachon/Proteina-Complexa
 cd Proteina-Complexa
 
 # 1) Foundry environment (separate from proteina)
@@ -200,7 +205,7 @@ Run Complexa from your dedicated `proteina` env. If RF3 is installed in a separa
 ```bash
 # Resolve RF3 executable from the foundry env
 export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
-export RF3_CKPT_PATH=/absolute/path/to/rf3_latest.pt
+export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
 
 # Run full pipeline from proteina env with RF3-enabled MPS preset
 conda run -n proteina complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
@@ -312,8 +317,8 @@ Edit `.env` and set the paths for any models or tools you have installed:
 # ── Community Model Checkpoints ──
 AF2_DIR=/path/to/community_models/ckpts/AF2           # AlphaFold2 parameters
 ESM_DIR=/path/to/community_models/ckpts/ESM2          # ESM2 weights
-RF3_CKPT_PATH=/path/to/rf3_checkpoint.ckpt            # RoseTTAFold3 checkpoint
-RF3_EXEC_PATH=/path/to/.venv/bin/rf3                  # RoseTTAFold3 executable
+RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
+RF3_EXEC_PATH=/path/to/conda/envs/foundry/bin/rf3
 
 # ── Bioinformatics Tool Binaries ──
 SC_EXEC=/path/to/sc                                    # CCP4 shape complementarity (see note below)

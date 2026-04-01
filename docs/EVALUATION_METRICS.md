@@ -1318,7 +1318,7 @@ Required when using RF3 for refolding (e.g. `binder_folding_method: rf3_latest` 
 
 | Variable | Description |
 |----------|-------------|
-| `RF3_CKPT_PATH` | Path to the RF3 checkpoint file (e.g. `rf3_latest.pt`). |
+| `RF3_CKPT_PATH` | Path to the RF3 checkpoint file (e.g. `rf3_foundry_01_24_latest_remapped.ckpt`). |
 | `RF3_EXEC_PATH` | Path to the RF3 executable. |
 
 If either is unset, RF3 reward/refolding will fail at initialization with a clear error.

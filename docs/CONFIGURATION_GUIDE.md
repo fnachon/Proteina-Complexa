@@ -198,6 +198,8 @@ For RF3-enabled Apple Silicon workflows, use:
 Recommended dependency layout on macOS:
 
 - Keep Proteina-Complexa in a dedicated runtime env (for example `proteina`).
+- Install Proteina-Complexa from the MPS-enabled fork:
+  <https://github.com/fnachon/Proteina-Complexa>.
 - Install Foundry in a separate env (for example `foundry`) from
   <https://github.com/fnachon/foundry>.
 - Use Foundry to provide RF3 + ProteinMPNN/LigandMPNN + AtomWorks dependencies.
@@ -205,6 +207,9 @@ Recommended dependency layout on macOS:
 Minimal setup example:
 
 ```bash
+git clone https://github.com/fnachon/Proteina-Complexa
+cd Proteina-Complexa
+
 conda create -n foundry python=3.12 -y
 conda run -n foundry pip install torch
 conda run -n foundry pip install "rc-foundry[all] @ git+https://github.com/fnachon/foundry.git"
