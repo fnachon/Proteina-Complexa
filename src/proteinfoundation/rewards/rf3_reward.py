@@ -288,12 +288,22 @@ class RF3RewardRunner(BaseRewardModel):
 
         logger.info(f"Running RF3 command: {' '.join(cmd)}")
         try:
+            child_env = os.environ.copy()
+            debug_val = child_env.get("DEBUG")
+            valid_bool_values = {"1", "0", "true", "false", "yes", "no", "on", "off"}
+            if debug_val is not None and str(debug_val).strip().lower() not in valid_bool_values:
+                logger.warning(
+                    f"Invalid DEBUG={debug_val!r} for RF3/foundry boolean parsing; forcing DEBUG=false for RF3 subprocess."
+                )
+                child_env["DEBUG"] = "false"
+
             # Run RF3
             result = subprocess.run(
                 cmd,
                 timeout=500,  # 500 seconds timeout
                 capture_output=True,
                 text=True,
+                env=child_env,
             )
 
             if result.returncode != 0:

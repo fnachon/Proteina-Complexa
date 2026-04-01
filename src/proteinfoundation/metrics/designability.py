@@ -11,6 +11,7 @@ from transformers import logging as hf_logging
 from proteinfoundation.metrics.folding_models import run_colabfold, run_esmfold
 from proteinfoundation.metrics.inverse_folding_models import run_proteinmpnn
 from proteinfoundation.metrics.metric_utils import rmsd_metric
+from proteinfoundation.utils.device_utils import get_best_torch_device
 from proteinfoundation.utils.pdb_utils import extract_seq_from_pdb, load_pdb, pdb_name_from_path
 
 hf_logging.set_verbosity_error()
@@ -90,6 +91,7 @@ def scRMSD(
             num_seq_per_target=num_seq_per_target,
             sampling_temp=pmpnn_sampling_temp,
             fix_pos=motif_index,
+            ca_only=False,
         )  # List of sequences
         gen_seqs = [v["seq"] for v in gen_seqs]
         suffix = "mpnn"
@@ -236,6 +238,7 @@ def run_multimer_eval(
         num_seq_per_target=20,
         omit_AAs="C",
         sampling_temp=0.1,
+        ca_only=False,
         verbose=False,
     )  # list with dictionaries containing sequences, scores etc
 
@@ -285,15 +288,26 @@ def run_esmfold_multimer(
               containing pLDDT scores
 
     Note:
-        The function loads the ESMFold model onto GPU and processes sequences
-        sequentially. Existing files are skipped to avoid recomputation.
+        The function loads ESMFold on the best available backend (CUDA, MPS,
+        or CPU) and processes sequences sequentially. Existing files are skipped
+        to avoid recomputation.
     """
     import esm
 
     stats = []
     os.makedirs(path_to_esmfold_out, exist_ok=True)
     esm_model = esm.pretrained.esmfold_v1()
-    esm_model = esm_model.eval().cuda()
+    folding_device = get_best_torch_device()
+    try:
+        esm_model = esm_model.eval().to(folding_device)
+    except RuntimeError as e:
+        if folding_device.type == "mps":
+            logger.warning(f"ESMFold failed to initialize on MPS ({e}). Falling back to CPU.")
+            folding_device = torch.device("cpu")
+            esm_model = esm_model.eval().to(folding_device)
+        else:
+            raise
+    logger.info(f"Running multimer ESMFold on device: {folding_device}")
     out_esm_paths = []
     for seq_num, seq in enumerate(seqs):
         fname = f"esm_{seq_num + 1}.pdb"

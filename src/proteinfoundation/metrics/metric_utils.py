@@ -117,7 +117,7 @@ def relax_protein(
     unrelaxed_pdb_path: str,
     output_directory: str,
     output_name: str,
-    model_device: str = "cuda:0",
+    model_device: str = "auto",
 ) -> str:
     """Relaxes a protein structure using Amber molecular dynamics.
 
@@ -129,7 +129,7 @@ def relax_protein(
         unrelaxed_pdb_path: Path to the input PDB file containing the unrelaxed structure.
         output_directory: Directory where the relaxed structure will be saved.
         output_name: Base name for the output file (without extension).
-        model_device: Device to use for computation. Defaults to "cuda:0".
+        model_device: Device to use for computation. Defaults to "auto".
 
     Returns:
         Path to the relaxed PDB file.
@@ -140,8 +140,17 @@ def relax_protein(
     from openfold.np.relax import relax
 
     os.makedirs(output_directory, exist_ok=True)
+    normalized_device = (model_device or "auto").lower()
+    if normalized_device == "auto":
+        use_gpu = torch.cuda.is_available()
+    else:
+        use_gpu = "cuda" in normalized_device
+
+    if "mps" in normalized_device:
+        logger.warning("OpenMM relaxation does not support MPS directly; falling back to CPU/OpenMM defaults.")
+
     amber_relaxer = relax.AmberRelaxation(
-        use_gpu=(model_device != "cpu"),
+        use_gpu=use_gpu,
         exclude_residues=[],
         max_iterations=0,
         max_outer_iterations=20,
@@ -151,8 +160,8 @@ def relax_protein(
     unrelaxed_protein = from_pdb_string(open(unrelaxed_pdb_path).read())
 
     visible_devices = os.getenv("CUDA_VISIBLE_DEVICES", default="")
-    if "cuda" in model_device:
-        device_no = model_device.split(":")[-1]
+    if "cuda" in normalized_device:
+        device_no = normalized_device.split(":")[-1] if ":" in normalized_device else "0"
         os.environ["CUDA_VISIBLE_DEVICES"] = device_no
     # the struct_str will contain either a PDB-format or a ModelCIF format string
     struct_str, _, _ = amber_relaxer.process(prot=unrelaxed_protein)

@@ -182,8 +182,10 @@ class FlashPairBiasAttention(nn.Module):
         Returns:
             Updated node features of shape (b, n, d_s).
         """
-        # Get target dtype for flash attention (handles autocast)
-        target_dtype = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else node_feats.dtype
+        # Get target dtype for flash attention (handles autocast on CUDA)
+        target_dtype = (
+            torch.get_autocast_gpu_dtype() if (torch.is_autocast_enabled() and node_feats.is_cuda) else node_feats.dtype
+        )
 
         node_feats = self.node_norm(node_feats)
         h = self.heads

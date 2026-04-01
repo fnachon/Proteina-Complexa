@@ -390,8 +390,10 @@ class OpenfoldSideChainAnglesSeqFeat(Feature):
     def _get_sidechain_angles(self, batch):
         orig_dtype = batch["coords"].dtype
         aatype = batch["residue_type"]  # [b, n]
-        coords = batch["coords"].double()  # [b, n, 37, 3]
-        atom_mask = batch["coord_mask"].double()  # [b, n, 37]
+        # MPS does not support float64 tensors; keep OpenFold preprocessing in float32 there.
+        compute_dtype = torch.float32 if batch["coords"].device.type == "mps" else torch.float64
+        coords = batch["coords"].to(dtype=compute_dtype)  # [b, n, 37, 3]
+        atom_mask = batch["coord_mask"].to(dtype=compute_dtype)  # [b, n, 37]
         p = {
             "aatype": aatype,
             "all_atom_positions": coords,

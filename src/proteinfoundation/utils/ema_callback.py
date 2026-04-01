@@ -274,14 +274,15 @@ class EMAOptimizer(torch.optim.Optimizer):
     def update(self):
         if self.stream is not None:
             self.stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(self.stream):
+                current_model_state = tuple(
+                    param.data.to(self.device, non_blocking=True) for param in self.all_parameters()
+                )
+                if self.device.type == "cuda":
+                    ema_update(self.ema_params, current_model_state, self.decay)
+            return
 
-        with torch.cuda.stream(self.stream):
-            current_model_state = tuple(
-                param.data.to(self.device, non_blocking=True) for param in self.all_parameters()
-            )
-
-            if self.device.type == "cuda":
-                ema_update(self.ema_params, current_model_state, self.decay)
+        current_model_state = tuple(param.data.to(self.device) for param in self.all_parameters())
 
         if self.device.type == "cpu":
             self.thread = threading.Thread(
@@ -294,6 +295,8 @@ class EMAOptimizer(torch.optim.Optimizer):
                 ),
             )
             self.thread.start()
+        else:
+            ema_update(self.ema_params, current_model_state, self.decay)
 
     def swap_tensors(self, tensor1, tensor2):
         tmp = torch.empty_like(tensor1)

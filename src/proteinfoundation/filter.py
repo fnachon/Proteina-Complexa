@@ -10,6 +10,8 @@ import torch
 from dotenv import load_dotenv
 from loguru import logger
 
+from proteinfoundation.utils.device_utils import format_backend_diagnostics, get_best_torch_device
+
 
 def _get_filter_cfg(cfg) -> Any:
     """Return the filter config, preferring ``generation.filter`` over legacy
@@ -51,7 +53,11 @@ def setup(
     """
     logger.info(" ".join(sys.argv))
 
-    assert torch.cuda.is_available(), "CUDA not available"  # Needed for ESMfold and designability
+    run_device = get_best_torch_device()
+    if run_device.type == "cpu":
+        logger.warning(f"No CUDA/MPS backend detected. Falling back to CPU. {format_backend_diagnostics()}")
+    else:
+        logger.info(f"Using {run_device.type.upper()} backend. {format_backend_diagnostics()}")
     logger.add(
         sys.stdout,
         format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {file}:{line} | {message}",

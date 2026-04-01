@@ -11,6 +11,8 @@ from transformers.models.esm.openfold_utils.feats import atom14_to_atom37
 from transformers.models.esm.openfold_utils.protein import Protein as OFProtein
 from transformers.models.esm.openfold_utils.protein import to_pdb
 
+from proteinfoundation.utils.device_utils import get_best_torch_device
+
 hf_logging.set_verbosity_error()
 
 
@@ -87,7 +89,17 @@ def run_esmfold(
 
     tokenizer = AutoTokenizer.from_pretrained("facebook/esmfold_v1", cache_dir=final_cache_dir)
     esm_model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", cache_dir=final_cache_dir)
-    esm_model = esm_model.cuda()
+    folding_device = get_best_torch_device()
+    try:
+        esm_model = esm_model.to(folding_device)
+    except RuntimeError as e:
+        if folding_device.type == "mps":
+            logger.warning(f"ESMFold failed to initialize on MPS ({e}). Falling back to CPU.")
+            folding_device = torch.device("cpu")
+            esm_model = esm_model.to(folding_device)
+        else:
+            raise
+    logger.info(f"Running ESMFold on device: {folding_device}")
 
     # Run ESMFold
     list_of_strings_pdb = []
@@ -121,7 +133,7 @@ def run_esmfold(
             add_special_tokens=False,
             padding=True,
         )
-        inputs = {k: inputs[k].cuda() for k in inputs}
+        inputs = {k: inputs[k].to(folding_device) for k in inputs}
 
         with torch.no_grad():
             _outputs = esm_model(**inputs)

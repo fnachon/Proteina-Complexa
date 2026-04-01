@@ -65,6 +65,16 @@ complexa analyze  configs/evaluate.yaml
 complexa design configs/search_binder_local_pipeline.yaml          # Protein binder
 complexa design configs/search_ligand_binder_local_pipeline.yaml   # Ligand binder
 complexa design configs/search_ame_local_pipeline.yaml             # AME motif scaffolding
+
+# Apple Silicon / MPS presets
+complexa design configs/search_binder_local_pipeline_mps.yaml
+complexa design configs/search_ligand_binder_local_pipeline_mps.yaml
+complexa design configs/search_ame_local_pipeline_mps.yaml
+
+# Apple Silicon / MPS + RF3 presets
+complexa design configs/search_binder_local_pipeline_mps_rf3.yaml
+complexa design configs/search_ligand_binder_local_pipeline_mps_rf3.yaml
+complexa design configs/search_ame_local_pipeline_mps_rf3.yaml
 ```
 
 ---
@@ -85,6 +95,28 @@ Every evaluation is configured by two keys: **`protein_type`** (set in evaluatio
 Each base binder type has a **motif counterpart** that adds motif RMSD, motif sequence recovery, and (for ligand targets) ligand clash detection on top of the standard binder metrics.
 
 Pipeline configs live under `configs/pipeline/`. The top-level pipeline YAML (e.g. `search_binder_local_pipeline.yaml`) composes stage configs via Hydra defaults. The motif protein binder evaluation can also be run standalone against outputs from any protein binder pipeline.
+
+### Apple Silicon (macOS / MPS) Defaults
+
+For out-of-the-box local runs on Apple Silicon, use:
+
+- `search_binder_local_pipeline_mps.yaml`
+- `search_ligand_binder_local_pipeline_mps.yaml`
+- `search_ame_local_pipeline_mps.yaml`
+
+RF3-enabled Apple Silicon presets:
+
+- `search_binder_local_pipeline_mps_rf3.yaml`
+- `search_ligand_binder_local_pipeline_mps_rf3.yaml`
+- `search_ame_local_pipeline_mps_rf3.yaml`
+
+These presets default to monomer-oriented evaluation (MPS-safe):
+
+- disable binder or motif-binder refolding metrics (`compute_binder_metrics: false` or `compute_motif_binder_metrics: false`)
+- keep `compute_monomer_metrics: true` and `compute_esm_metrics: true`
+- set `aggregation.analysis_modes: [monomer]`
+
+If you have RF3/AF2 dependencies installed and want full binder evaluation on macOS, override the metric flags explicitly.
 
 ---
 
@@ -361,6 +393,7 @@ ESM pseudo-perplexity can be computed alongside binder evaluation to assess sequ
 metric:
   compute_esm_metrics: true
   esm_model: facebook/esm2_t33_650M_UR50D   # default
+  esm_force_offline: false                  # default; downloads on first use if missing
 ```
 
 **Columns produced** (per sequence type):
@@ -370,7 +403,8 @@ metric:
 | `{seq}_esm_pseudo_perplexity` | ESM pseudo-perplexity (lower = more natural) |
 | `{seq}_esm_log_likelihood` | ESM log-likelihood |
 
-Uses `ESM_DIR` or `CACHE_DIR` environment variable for model cache.
+Uses `ESM_DIR` or `CACHE_DIR` environment variable for model cache. Set
+`metric.esm_force_offline: true` to disable download attempts and require local cache.
 
 ### Job Parallelization
 
@@ -1289,6 +1323,24 @@ Required when using RF3 for refolding (e.g. `binder_folding_method: rf3_latest` 
 
 If either is unset, RF3 reward/refolding will fail at initialization with a clear error.
 
+For Apple Silicon MPS presets, RF3 variables are not required for the default workflow because RF3-dependent binder refolding is disabled by default.
+
+macOS example (run Complexa in `proteina`, reuse RF3 installed in a separate
+`foundry` env from <https://github.com/fnachon/foundry>):
+
+```bash
+export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
+export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
+```
+
+After setting these, use RF3-enabled MPS presets directly:
+
+```bash
+conda run -n proteina complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
+    ++run_name=my_binder_mps_rf3 \
+    ++generation.task_name=02_PDL1
+```
+
 **RF3 output directory:** Predictions are written to an output directory passed at call time. In config you can set `search.rf3_dump_dir` (e.g. under the generation config) to control where RF3 writes results; if unset, the reward runner uses a default of `./rf3_outputs` (relative to the process working directory). The output directory is **not** created at reward initialization—it is created only when a prediction is actually run (e.g. by the binder evaluation pipeline or by the code that calls `reset_dump_dir` with a concrete path). This avoids leaving an empty `rf3_outputs` directory when RF3 is never used.
 
 ### Interface Metrics
@@ -1394,6 +1446,7 @@ metric:
 | `metric.num_redesign_seqs` | `8` | Number of MPNN redesign sequences per sample |
 | `metric.interface_cutoff` | `8.0` | Distance cutoff (Å) for defining interface residues |
 | `metric.compute_esm_metrics` | `false` | Compute ESM pseudo-perplexity |
+| `metric.esm_force_offline` | `false` | If true, never download ESM model; local cache only |
 | `metric.compute_pre_refolding_metrics` | `false` | Compute interface metrics on generated structure |
 | `metric.compute_refolded_structure_metrics` | `false` | Compute interface metrics on refolded structure |
 | `metric.keep_folding_outputs` | `true` | Retain intermediate folding output files |

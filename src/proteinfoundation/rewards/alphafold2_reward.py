@@ -94,7 +94,7 @@ class AF2RewardModel(BaseRewardModel):
             use_initial_guess: Whether to use initial guess.
             use_initial_atom_pos: Whether to use initial atom positions.
             seed: Random seed for reproducibility.
-            device_id: GPU device ID to use. If None, auto-detects current CUDA device.
+            device_id: GPU device ID to use. If CUDA is unavailable, falls back to JAX CPU.
         """
         if device_id is None:
             device_id = torch.cuda.current_device() if torch.cuda.is_available() else 0
@@ -122,7 +122,19 @@ class AF2RewardModel(BaseRewardModel):
         for reward_name in self.reward_options[protocol]:
             if reward_name not in self.reward_weights:
                 self.reward_weights[reward_name] = 0.0
-        self.device = jax.devices("gpu")[device_id]
+        if torch.cuda.is_available():
+            try:
+                gpu_devices = jax.devices("gpu")
+            except Exception:
+                gpu_devices = []
+            if gpu_devices:
+                self.device = gpu_devices[min(device_id, len(gpu_devices) - 1)]
+            else:
+                self.device = jax.devices("cpu")[0]
+                logger.warning("CUDA detected by PyTorch but unavailable to JAX. Using JAX CPU backend.")
+        else:
+            self.device = jax.devices("cpu")[0]
+            logger.warning("CUDA not available for AF2 reward model; using JAX CPU backend.")
         self.seed = seed
         self.rng = random.Random(seed)
 

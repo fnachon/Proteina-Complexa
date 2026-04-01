@@ -491,6 +491,7 @@ def _run_mpnn_with_fixed_motif(
         fix_pos=motif_index,
         num_seq_per_target=num_seq,
         sampling_temp=temp,
+        ca_only=False,
     )
     return [v["seq"] for v in seqs]
 

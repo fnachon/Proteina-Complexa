@@ -2,6 +2,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from typing import Literal
 
 from biotite.sequence.io import fasta
@@ -138,7 +139,7 @@ def run_proteinmpnn(
     omit_AAs: str = "X",
     sampling_temp: float = 0.1,
     seed: int | None = None,
-    ca_only: bool = True,
+    ca_only: bool = False,
     verbose: bool = False,
 ) -> list[dict[str, float]]:
     """Runs ProteinMPNN for protein sequence design.
@@ -175,7 +176,7 @@ def run_proteinmpnn(
         RuntimeError: If ProteinMPNN command fails.
     """
     name = pdb_name_from_path(pdb_file_path)
-    python_exec = os.environ.get("PYTHON_EXEC", "python")
+    python_exec = os.environ.get("PYTHON_EXEC", sys.executable)
     # Base command without optional parameters
     base_command = f"""
     {python_exec} ./community_models/ProteinMPNN/protein_mpnn_run.py \
@@ -193,9 +194,6 @@ def run_proteinmpnn(
         base_command += " --ca_only"
     if seed is not None:
         base_command += f" --seed {seed}"
-    if not verbose:
-        base_command += " > /dev/null 2>&1"
-
     if fix_pos:
         fixed_positions_path = write_fix_pos_file(fix_pos, all_chains, out_dir_root, pdb_file_path)
         command = base_command + f" --fixed_positions_jsonl {fixed_positions_path}"
@@ -265,7 +263,7 @@ def run_ligandmpnn(
         RuntimeError: If ProteinMPNN command fails.
     """
     name = pdb_name_from_path(pdb_file_path)
-    python_exec = os.environ.get("PYTHON_EXEC", "python")
+    python_exec = os.environ.get("PYTHON_EXEC", sys.executable)
     chain_specificifaction = (
         f" --chains_to_design {','.join(pdb_path_chains)}"  # f" --parse_these_chains_only {pdb_path_chains}"
     )
@@ -293,9 +291,6 @@ def run_ligandmpnn(
         command = base_command
     if seed is not None:
         base_command += f" --seed {seed}"
-    if not verbose:
-        base_command += " > /dev/null 2>&1"
-
     try:
         result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
         if result.returncode != 0:
@@ -372,7 +367,7 @@ def run_solublempnn(
         RuntimeError: If ProteinMPNN command fails.
     """
     name = pdb_name_from_path(pdb_file_path)
-    python_exec = os.environ.get("PYTHON_EXEC", "python")
+    python_exec = os.environ.get("PYTHON_EXEC", sys.executable)
     chain_specificifaction = (
         f" --chains_to_design {','.join(pdb_path_chains)}"  # f" --parse_these_chains_only {pdb_path_chains}"
     )
@@ -397,9 +392,6 @@ def run_solublempnn(
         command = base_command
     if seed is not None:
         base_command += f" --seed {seed}"
-    if not verbose:
-        base_command += " > /dev/null 2>&1"
-
     try:
         result = subprocess.run(command, shell=True, check=True, capture_output=True, text=True)
         if result.returncode != 0:

@@ -28,6 +28,11 @@ from omegaconf import open_dict
 from proteinfoundation.proteina import Proteina
 from proteinfoundation.rewards.base_reward import TOTAL_REWARD_KEY
 from proteinfoundation.utils.config_utils import filter_config_for_logging
+from proteinfoundation.utils.device_utils import (
+    format_backend_diagnostics,
+    get_best_torch_device,
+    get_lightning_accelerator,
+)
 from proteinfoundation.utils.lora_utils import replace_lora_layers
 from proteinfoundation.utils.pdb_utils import write_prot_to_pdb
 
@@ -49,7 +54,14 @@ def setup(
     """
     logger.info(" ".join(sys.argv))
 
-    assert torch.cuda.is_available(), "CUDA not available"  # Needed for ESMfold and designability
+    run_device = get_best_torch_device()
+    if run_device.type == "cpu":
+        logger.warning(
+            "No CUDA/MPS backend detected. Falling back to CPU; generation will be slower. "
+            f"{format_backend_diagnostics()}"
+        )
+    else:
+        logger.info(f"Using {run_device.type.upper()} backend for generation. {format_backend_diagnostics()}")
     logger.add(
         sys.stdout,
         format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {file}:{line} | {message}",
@@ -364,7 +376,8 @@ def save_predictions(
                     if key != TOTAL_REWARD_KEY:
                         row_data[key] = tensor[i].float().detach().cpu().numpy()
             else:
-                row_data["total_reward"] = np.nan
+                # Keep samples filterable/rankable even when reward scoring is disabled.
+                row_data["total_reward"] = 0.0
             if sample_type is not None:
                 row_data["sample_type"] = sample_type
             if "metadata_tag" in batch_pred and i < len(batch_pred["metadata_tag"]):
@@ -452,7 +465,8 @@ def save_protein_ligand_predictions(
                     if key != TOTAL_REWARD_KEY:
                         row_data[key] = tensor[i].float().detach().cpu().numpy()
             else:
-                row_data["total_reward"] = np.nan
+                # Keep samples filterable/rankable even when reward scoring is disabled.
+                row_data["total_reward"] = 0.0
             if sample_type is not None:
                 row_data["sample_type"] = sample_type
             if "metadata_tag" in batch_pred and i < len(batch_pred["metadata_tag"]):
@@ -648,13 +662,15 @@ def main(cfg):
         model.ligand = ligand  # shouldn't be set here, but pass in dataset
 
     # Sample model
+    trainer_accelerator = get_lightning_accelerator("gpu")
     trainer = L.Trainer(
-        accelerator="gpu",
+        accelerator=trainer_accelerator,
         devices=1,
         logger=False,
         enable_checkpointing=False,
         inference_mode=False,
     )  # set it to False, as we need refinement in predict step
+    logger.info(f"Generation trainer accelerator: {trainer_accelerator}")
     predictions = trainer.predict(model, dataloader)
     # predictions is now a list of dicts (one per batch), each dict contains:
     # - 'coors': [batch_size, n, 37, 3]

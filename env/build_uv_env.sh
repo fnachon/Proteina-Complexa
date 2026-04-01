@@ -123,6 +123,15 @@ echo "Prompt name: $VENV_NAME"
 echo "Full install: $FULL_INSTALL"
 echo ""
 
+OS_NAME="$(uname -s)"
+ARCH_NAME="$(uname -m)"
+IS_APPLE_SILICON=false
+if [[ "$OS_NAME" == "Darwin" && "$ARCH_NAME" == "arm64" ]]; then
+    IS_APPLE_SILICON=true
+fi
+echo "Platform: $OS_NAME/$ARCH_NAME (apple_silicon=$IS_APPLE_SILICON)"
+echo ""
+
 # ------------------------------------------------------------------------------
 # 1. Check/Install UV
 # ------------------------------------------------------------------------------
@@ -144,11 +153,16 @@ source "$VENV_DIR/.venv/bin/activate"
 echo "      Python: $(which python)"
 
 # ------------------------------------------------------------------------------
-# 3. Install PyTorch with CUDA 12.6
+# 3. Install PyTorch
 # ------------------------------------------------------------------------------
-echo "[3/7] Installing PyTorch 2.7.0 with CUDA 12.6..."
-uv pip install torch==2.7.0+cu126 torchvision torchaudio \
-    --index-url https://download.pytorch.org/whl/cu126
+if [[ "$IS_APPLE_SILICON" == "true" ]]; then
+    echo "[3/8] Installing PyTorch 2.7.0 for Apple Silicon (MPS)..."
+    uv pip install torch==2.7.0 torchvision torchaudio
+else
+    echo "[3/8] Installing PyTorch 2.7.0 with CUDA 12.6..."
+    uv pip install torch==2.7.0+cu126 torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cu126
+fi
 
 # ------------------------------------------------------------------------------
 # 4. Install base dependencies from pyproject.toml
@@ -159,9 +173,14 @@ uv pip install --index-strategy unsafe-best-match -e "$PROJECT_DIR"
 # ------------------------------------------------------------------------------
 # 5. Install PyTorch Geometric packages
 # ------------------------------------------------------------------------------
-echo "[5/7] Installing PyTorch Geometric packages..."
-uv pip install torch_geometric torch_scatter torch_sparse torch_cluster \
-    -f https://data.pyg.org/whl/torch-2.7.0+cu126.html
+echo "[5/8] Installing PyTorch Geometric packages..."
+if [[ "$IS_APPLE_SILICON" == "true" ]]; then
+    uv pip install torch_geometric || echo "Warning: torch_geometric install failed"
+    echo "      -> Skipping torch_scatter/torch_sparse/torch_cluster CUDA wheels on Apple Silicon"
+else
+    uv pip install torch_geometric torch_scatter torch_sparse torch_cluster \
+        -f https://data.pyg.org/whl/torch-2.7.0+cu126.html
+fi
 
 # ------------------------------------------------------------------------------
 # 6. Install Graphein and Atomworks
@@ -185,11 +204,16 @@ if [ "$FULL_INSTALL" = true ]; then
     echo "      -> Installing local colabdesign (community_models/colabdesign)..."
     uv pip install -e "$PROJECT_DIR/community_models/colabdesign"
 
-    echo "      -> JAX with CUDA..."
-    uv pip install jaxlib==0.4.29+cuda12.cudnn91 \
-        -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-    uv pip install "jax[cuda12]==0.4.29" \
-        -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+    if [[ "$IS_APPLE_SILICON" == "true" ]]; then
+        echo "      -> JAX (CPU backend for Apple Silicon)..."
+        uv pip install jaxlib==0.4.29 jax==0.4.29
+    else
+        echo "      -> JAX with CUDA..."
+        uv pip install jaxlib==0.4.29+cuda12.cudnn91 \
+            -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+        uv pip install "jax[cuda12]==0.4.29" \
+            -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+    fi
     uv pip install flax==0.9.0 --no-deps
 
     echo "      -> Tmol..."
@@ -223,7 +247,7 @@ echo "To activate the environment:"
 echo "  source $VENV_DIR/.venv/bin/activate"
 echo ""
 echo "To verify installation:"
-echo "  python -c \"import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}')\""
+echo "  python -c \"import torch; print(f'PyTorch: {torch.__version__}, CUDA: {torch.cuda.is_available()}, MPS: {getattr(torch.backends, \\\"mps\\\", None) and torch.backends.mps.is_available()}')\""
 echo ""
 echo "Note: Foldseek and MMseqs2 are not included in the public build."
 echo "Install them separately if needed:"

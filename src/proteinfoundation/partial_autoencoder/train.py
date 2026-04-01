@@ -16,6 +16,7 @@ from loguru import logger
 from omegaconf import OmegaConf
 
 from proteinfoundation.partial_autoencoder.autoencoder import AutoEncoder
+from proteinfoundation.utils.device_utils import get_lightning_accelerator
 from proteinfoundation.utils.ema_callback import EMA, EmaModelCheckpoint
 from proteinfoundation.utils.fetch_last_ckpt import fetch_last_ckpt
 from proteinfoundation.utils.seed_callback import SeedCallback
@@ -96,18 +97,28 @@ def initialize_callbacks(cfg_exp):
     return callbacks
 
 
-def get_training_precision(cfg_exp, is_cluster_run):
+def get_training_precision(cfg_exp, is_cluster_run, accelerator):
     """
     Gets and sets correct training precision.
     """
     precision = "32"
-    if not cfg_exp.force_precision_f32:
+    if cfg_exp.force_precision_f32:
+        torch.set_float32_matmul_precision("high")
+        return precision
+
+    if accelerator == "gpu":
         log_info("Using mixed precision")
         torch.set_float32_matmul_precision("medium")
         if is_cluster_run:
             precision = "bf16-mixed"
         else:
             precision = "16"
+    elif accelerator == "mps":
+        log_info("MPS backend detected - using fp32 precision for stability")
+        torch.set_float32_matmul_precision("high")
+    else:
+        log_info("CPU backend detected - using fp32 precision")
+        torch.set_float32_matmul_precision("high")
     return precision
 
 
@@ -232,6 +243,22 @@ def main(cfg_exp) -> None:
         cfg_exp.hardware.ngpus_per_node_ = 1
         cfg_exp.hardware.nnodes_ = 1
         cfg_exp.run_name = cfg_exp.run_name + "_local"
+
+    requested_accelerator = str(cfg_exp.hardware.accelerator)
+    resolved_accelerator = get_lightning_accelerator(requested_accelerator)
+    if resolved_accelerator != requested_accelerator:
+        log_info(
+            f"Requested accelerator '{requested_accelerator}' unavailable. "
+            f"Using '{resolved_accelerator}' instead."
+        )
+    cfg_exp.hardware.accelerator = resolved_accelerator
+    if resolved_accelerator != "gpu":
+        cfg_exp.hardware.ngpus_per_node_ = 1
+        cfg_exp.hardware.nnodes_ = 1
+        if cfg_exp.opt.dist_strategy == "ddp":
+            cfg_exp.opt.dist_strategy = "auto"
+            log_info("DDP strategy disabled for non-CUDA backend; using strategy='auto'.")
+
     log_info(f"Exp config {cfg_exp}")
 
     run_name, root_run, ckpt_path_store = get_run_dirs(cfg_exp)
@@ -274,7 +301,7 @@ def main(cfg_exp) -> None:
         plugins=plugins,
         accumulate_grad_batches=cfg_exp.opt.accumulate_grad_batches,
         num_sanity_val_steps=0,
-        precision=get_training_precision(cfg_exp, is_cluster_run),
+        precision=get_training_precision(cfg_exp, is_cluster_run, cfg_exp.hardware.accelerator),
         gradient_clip_algorithm="norm",
         gradient_clip_val=1.0,
         # limit_train_batches=25,

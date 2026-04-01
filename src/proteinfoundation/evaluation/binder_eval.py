@@ -315,7 +315,12 @@ def compute_binder_metrics(
                 # ESM pseudo-perplexity metrics (optional)
                 if cfg_metric.get("compute_esm_metrics", False) and ESM_AVAILABLE and seqs:
                     esm_model = cfg_metric.get("esm_model", "facebook/esm2_t33_650M_UR50D")
-                    esm_df = compute_esm_ppl_for_sequences(seqs, model_name=esm_model)
+                    esm_force_offline = cfg_metric.get("esm_force_offline", False)
+                    esm_df = compute_esm_ppl_for_sequences(
+                        seqs,
+                        model_name=esm_model,
+                        force_offline=esm_force_offline,
+                    )
 
                     row_dict[f"{seq_type}_esm_pseudo_perplexity"] = esm_df["esm_pseudo_perplexity"].iloc[seq_best_idx]
                     row_dict[f"{seq_type}_esm_log_likelihood"] = esm_df["esm_log_likelihood"].iloc[seq_best_idx]

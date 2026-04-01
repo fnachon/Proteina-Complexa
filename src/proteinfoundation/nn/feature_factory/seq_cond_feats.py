@@ -4,7 +4,39 @@ import random
 
 import torch
 from loguru import logger
-from torch_scatter import scatter_mean
+try:
+    from torch_scatter import scatter_mean
+except ModuleNotFoundError:
+    def scatter_mean(src, index, dim=0, dim_size=None):
+        """Fallback scatter_mean using PyTorch ops when torch_scatter is unavailable."""
+        if dim < 0:
+            dim += src.dim()
+        if dim != 0:
+            src = src.transpose(0, dim)
+
+        if index.dim() != 1:
+            index = index.reshape(-1)
+        index = index.long()
+
+        if src.size(0) != index.numel():
+            raise ValueError(
+                f"scatter_mean fallback expects index length {src.size(0)}, got {index.numel()}"
+            )
+
+        if dim_size is None:
+            dim_size = int(index.max().item()) + 1 if index.numel() > 0 else 0
+
+        out = src.new_zeros((dim_size, *src.shape[1:]))
+        out.index_add_(0, index, src)
+
+        counts = src.new_zeros((dim_size,))
+        counts.index_add_(0, index, torch.ones(index.shape[0], dtype=src.dtype, device=src.device))
+        counts = counts.clamp_min_(1.0)
+        out = out / counts.view(-1, *([1] * (src.dim() - 1)))
+
+        if dim != 0:
+            out = out.transpose(0, dim)
+        return out
 
 from proteinfoundation.nn.feature_factory.base_feature import Feature
 from proteinfoundation.nn.feature_factory.feature_utils import (

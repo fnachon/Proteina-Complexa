@@ -12,7 +12,39 @@ from openfold.data import data_transforms
 from openfold.np.residue_constants import atom_types
 from torch.nn import functional as F
 from torch.nn.utils.rnn import pad_sequence
-from torch_scatter import scatter_mean
+try:
+    from torch_scatter import scatter_mean
+except ModuleNotFoundError:
+    def scatter_mean(src, index, dim=0, dim_size=None):
+        """Fallback scatter_mean using PyTorch ops when torch_scatter is unavailable."""
+        if dim < 0:
+            dim += src.dim()
+        if dim != 0:
+            src = src.transpose(0, dim)
+
+        if index.dim() != 1:
+            index = index.reshape(-1)
+        index = index.long()
+
+        if src.size(0) != index.numel():
+            raise ValueError(
+                f"scatter_mean fallback expects index length {src.size(0)}, got {index.numel()}"
+            )
+
+        if dim_size is None:
+            dim_size = int(index.max().item()) + 1 if index.numel() > 0 else 0
+
+        out = src.new_zeros((dim_size, *src.shape[1:]))
+        out.index_add_(0, index, src)
+
+        counts = src.new_zeros((dim_size,))
+        counts.index_add_(0, index, torch.ones(index.shape[0], dtype=src.dtype, device=src.device))
+        counts = counts.clamp_min_(1.0)
+        out = out / counts.view(-1, *([1] * (src.dim() - 1)))
+
+        if dim != 0:
+            out = out.transpose(0, dim)
+        return out
 
 from proteinfoundation.utils.angle_utils import bond_angles, signed_dihedral_angle
 from proteinfoundation.utils.fold_utils import extract_cath_code_by_level
@@ -1057,8 +1089,10 @@ class OpenfoldSideChainAnglesSeqFeat(Feature):
     def _get_sidechain_angles(self, batch):
         orig_dtype = batch["coords"].dtype
         aatype = batch["residue_type"]  # [b, n]
-        coords = batch["coords"].double()  # [b, n, 37, 3]
-        atom_mask = batch["coord_mask"].double()  # [b, n, 37]
+        # MPS does not support float64 tensors; keep OpenFold preprocessing in float32 there.
+        compute_dtype = torch.float32 if batch["coords"].device.type == "mps" else torch.float64
+        coords = batch["coords"].to(dtype=compute_dtype)  # [b, n, 37, 3]
+        atom_mask = batch["coord_mask"].to(dtype=compute_dtype)  # [b, n, 37]
         p = {
             "aatype": aatype,
             "all_atom_positions": coords,

@@ -1,0 +1,38 @@
+# Protein Binder Design Pipeline Configuration (Apple Silicon / MPS preset)
+#
+# This preset extends the standard local binder pipeline with MPS-friendly
+# defaults that avoid CUDA/JAX-dependent reward-guided search and binder
+# refolding during evaluation.
+#
+# Usage:
+#   complexa design configs/search_binder_local_pipeline_mps.yaml ++generation.task_name=38_TNFalpha
+
+defaults:
+  - search_binder_local_pipeline
+  - _self_
+
+run_name: search_binder_local_mps
+
+env_vars:
+  PYTORCH_ENABLE_MPS_FALLBACK: "1"
+  COMPLEXA_ACCELERATOR: "mps"
+
+# Keep one process per stage for stable memory use on Apple Silicon.
+gen_njobs: 1
+eval_njobs: 1
+
+generation:
+  search:
+    algorithm: single-pass
+  reward_model: null
+  refinement:
+    algorithm: null
+
+metric:
+  # Disable binder refolding metrics (ColabDesign/RF3 path) for the MPS preset.
+  compute_binder_metrics: false
+  compute_monomer_metrics: true
+  compute_esm_metrics: true
+
+aggregation:
+  analysis_modes: [monomer]

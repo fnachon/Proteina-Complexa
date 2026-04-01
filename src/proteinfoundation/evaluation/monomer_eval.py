@@ -79,6 +79,7 @@ def get_sequences_for_evaluation(
             pdb_path_chains=[chain_to_design],
             num_seq_per_target=num_seq_per_target,
             sampling_temp=pmpnn_sampling_temp,
+            ca_only=False,
         )
         return [v["seq"] for v in gen_seqs]
 

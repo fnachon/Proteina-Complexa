@@ -1,6 +1,6 @@
 # Inference and Search Guide
 
-How to run protein design with Proteina-Complexa: local execution, SLURM cluster deployment, custom targets, and troubleshooting.
+How to run protein design with Proteina-Complexa: local execution on Linux/CUDA or macOS/MPS, SLURM cluster deployment, custom targets, and troubleshooting.
 
 > **Documentation Map**
 > - Tuning YAML configs? See [Configuration Guide](CONFIGURATION_GUIDE.md)
@@ -49,6 +49,20 @@ complexa design configs/search_binder_local_pipeline.yaml \
     ++run_name=my_binder ++generation.task_name=02_PDL1
 ```
 
+Apple Silicon preset:
+
+```bash
+complexa design configs/search_binder_local_pipeline_mps.yaml \
+    ++run_name=my_binder_mps ++generation.task_name=02_PDL1
+```
+
+Apple Silicon + RF3 preset:
+
+```bash
+complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
+    ++run_name=my_binder_mps_rf3 ++generation.task_name=02_PDL1
+```
+
 | Aspect | Setting |
 |--------|---------|
 | Model | Protein model (`complexa.ckpt`) |
@@ -67,6 +81,20 @@ complexa design configs/search_ligand_binder_local_pipeline.yaml \
     ++run_name=my_ligand_binder ++generation.task_name=39_7V11_LIGAND
 ```
 
+Apple Silicon preset:
+
+```bash
+complexa design configs/search_ligand_binder_local_pipeline_mps.yaml \
+    ++run_name=my_ligand_binder_mps ++generation.task_name=39_7V11_LIGAND
+```
+
+Apple Silicon + RF3 preset:
+
+```bash
+complexa design configs/search_ligand_binder_local_pipeline_mps_rf3.yaml \
+    ++run_name=my_ligand_binder_mps_rf3 ++generation.task_name=39_7V11_LIGAND
+```
+
 | Aspect | Setting |
 |--------|---------|
 | Model | Ligand model with LoRA (`complexa_ligand.ckpt`) |
@@ -83,6 +111,20 @@ Scaffold functional motifs with ligand context. Combines motif features (atom-sp
 ```bash
 complexa design configs/search_ame_local_pipeline.yaml \
     ++run_name=my_ame ++generation.task_name=M0096_1chm
+```
+
+Apple Silicon preset:
+
+```bash
+complexa design configs/search_ame_local_pipeline_mps.yaml \
+    ++run_name=my_ame_mps ++generation.task_name=M0096_1chm
+```
+
+Apple Silicon + RF3 preset:
+
+```bash
+complexa design configs/search_ame_local_pipeline_mps_rf3.yaml \
+    ++run_name=my_ame_mps_rf3 ++generation.task_name=M0096_1chm
 ```
 
 | Aspect | Setting |
@@ -128,15 +170,33 @@ configs/search_binder_local_pipeline.yaml
 ├── pipeline/binder/binder_evaluate.yaml    → metric.*
 └── pipeline/binder/binder_analyze.yaml     → aggregation.*
 
+configs/search_binder_local_pipeline_mps.yaml
+└── inherits search_binder_local_pipeline.yaml with MPS-safe overrides
+
+configs/search_binder_local_pipeline_mps_rf3.yaml
+└── inherits search_binder_local_pipeline_mps.yaml and enables RF3 binder metrics
+
 configs/search_ligand_binder_local_pipeline.yaml
 ├── pipeline/ligand_binder/ligand_binder_generate.yaml    → generation.*
 ├── pipeline/ligand_binder/ligand_binder_evaluate.yaml    → metric.*
 └── pipeline/ligand_binder/ligand_binder_analyze.yaml     → aggregation.*
 
+configs/search_ligand_binder_local_pipeline_mps.yaml
+└── inherits search_ligand_binder_local_pipeline.yaml with MPS-safe overrides
+
+configs/search_ligand_binder_local_pipeline_mps_rf3.yaml
+└── inherits search_ligand_binder_local_pipeline_mps.yaml and enables RF3 binder metrics
+
 configs/search_ame_local_pipeline.yaml
 ├── pipeline/ame/ame_generate.yaml    → generation.*
 ├── pipeline/ame/ame_evaluate.yaml    → metric.*
 └── pipeline/ame/ame_analyze.yaml     → aggregation.*
+
+configs/search_ame_local_pipeline_mps.yaml
+└── inherits search_ame_local_pipeline.yaml with MPS-safe overrides
+
+configs/search_ame_local_pipeline_mps_rf3.yaml
+└── inherits search_ame_local_pipeline_mps.yaml and enables RF3 motif-binder metrics
 ```
 
 For the full config structure, pipeline YAML examples, and every configurable parameter, see the [Configuration Guide](CONFIGURATION_GUIDE.md).
@@ -148,6 +208,8 @@ For the full config structure, pipeline YAML examples, and every configurable pa
 ## Running Locally
 
 ### Quick Start
+
+Linux / CUDA:
 
 ```bash
 # Protein binder design
@@ -163,12 +225,150 @@ complexa design configs/search_ame_local_pipeline.yaml \
     ++run_name=my_ame ++generation.task_name=M0096_1chm
 ```
 
+macOS / Apple Silicon (MPS presets):
+
+```bash
+# Protein binder design (MPS preset)
+complexa design configs/search_binder_local_pipeline_mps.yaml \
+    ++run_name=my_binder_mps ++generation.task_name=02_PDL1
+
+# Ligand binder design (MPS preset)
+complexa design configs/search_ligand_binder_local_pipeline_mps.yaml \
+    ++run_name=my_ligand_binder_mps ++generation.task_name=39_7V11_LIGAND
+
+# AME motif scaffolding (MPS preset)
+complexa design configs/search_ame_local_pipeline_mps.yaml \
+    ++run_name=my_ame_mps ++generation.task_name=M0096_1chm
+```
+
+macOS / Apple Silicon (MPS + RF3 presets):
+
+```bash
+# Protein binder design (MPS + RF3 preset)
+complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
+    ++run_name=my_binder_mps_rf3 ++generation.task_name=02_PDL1
+
+# Ligand binder design (MPS + RF3 preset)
+complexa design configs/search_ligand_binder_local_pipeline_mps_rf3.yaml \
+    ++run_name=my_ligand_binder_mps_rf3 ++generation.task_name=39_7V11_LIGAND
+
+# AME motif scaffolding (MPS + RF3 preset)
+complexa design configs/search_ame_local_pipeline_mps_rf3.yaml \
+    ++run_name=my_ame_mps_rf3 ++generation.task_name=M0096_1chm
+```
+
+### macOS From Scratch (Recommended)
+
+For new users on Apple Silicon, use two separate conda environments:
+
+- `foundry` for RF3, ProteinMPNN/LigandMPNN, and AtomWorks.
+- `proteina` for running `complexa`.
+
+Install Foundry from the Apple Silicon fork: <https://github.com/fnachon/foundry>
+
+```bash
+# 1) Foundry (separate env)
+conda create -n foundry python=3.12 -y
+conda run -n foundry pip install torch
+conda run -n foundry pip install "rc-foundry[all] @ git+https://github.com/fnachon/foundry.git"
+conda run -n foundry foundry install base-models
+
+# 2) Proteina-Complexa runtime env
+conda create -n proteina python=3.12 -y
+./env/build_uv_env.sh
+source .venv/bin/activate
+conda run -n proteina pip install -e .
+conda run -n proteina complexa init uv --force
+source env.sh
+conda run -n proteina complexa download --complexa-all
+conda install -n proteina -c conda-forge openbabel -y
+
+# 3) Point Complexa to RF3 installed in foundry
+export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
+export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
+```
+
+Optional checkpoint wiring for ProteinMPNN/LigandMPNN:
+
+```bash
+mkdir -p community_models/ProteinMPNN/vanilla_model_weights
+mkdir -p community_models/ProteinMPNN/ca_model_weights
+mkdir -p community_models/ProteinMPNN/soluble_model_weights
+mkdir -p community_models/LigandMPNN/model_params
+
+ln -sf $HOME/.foundry/checkpoints/proteinmpnn_v_48_020.pt community_models/ProteinMPNN/vanilla_model_weights/v_48_020.pt
+ln -sf $HOME/.foundry/checkpoints/proteinmpnn_v_48_020.pt community_models/ProteinMPNN/ca_model_weights/v_48_020.pt
+ln -sf $HOME/.foundry/checkpoints/proteinmpnn_v_48_020.pt community_models/ProteinMPNN/soluble_model_weights/v_48_020.pt
+ln -sf $HOME/.foundry/checkpoints/proteinmpnn_v_48_020.pt community_models/LigandMPNN/model_params/proteinmpnn_v_48_020.pt
+ln -sf $HOME/.foundry/checkpoints/ligandmpnn_v_32_010_25.pt community_models/LigandMPNN/model_params/ligandmpnn_v_32_010_25.pt
+```
+
+### macOS (Apple Silicon / MPS)
+
+Use the dedicated `*_mps.yaml` pipeline presets for local runs on Apple Silicon:
+
+- `configs/search_binder_local_pipeline_mps.yaml`
+- `configs/search_ligand_binder_local_pipeline_mps.yaml`
+- `configs/search_ame_local_pipeline_mps.yaml`
+
+Use `*_mps_rf3.yaml` when RF3 is available in your environment:
+
+- `configs/search_binder_local_pipeline_mps_rf3.yaml`
+- `configs/search_ligand_binder_local_pipeline_mps_rf3.yaml`
+- `configs/search_ame_local_pipeline_mps_rf3.yaml`
+
+These presets are optimized for MPS compatibility:
+
+- `generation.search.algorithm=single-pass`
+- `generation.reward_model=null`
+- binder/motif-binder refolding metrics disabled by default
+- `metric.compute_monomer_metrics=true`, `metric.compute_esm_metrics=true`
+- `aggregation.analysis_modes=[monomer]`
+
+OpenFold note for macOS:
+
+- Proteina-Complexa imports `openfold` from the vendored `community_models/openfold` tree.
+- `openfold-3` is not used by Complexa pipeline code.
+- After updating Complexa, regenerate and source env setup so vendored community models are on `PYTHONPATH`:
+
+```bash
+complexa init uv --force
+source env.sh
+```
+
+If you have RF3/AF2 tooling available and want full binder metrics, use the `*_mps_rf3.yaml` presets.
+
+Keep Complexa running in your dedicated env (for example `proteina`). If RF3 is installed in a separate env (for example `foundry` from <https://github.com/fnachon/foundry>), set RF3 env vars first:
+
+```bash
+export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
+export RF3_CKPT_PATH=/absolute/path/to/rf3_latest.pt
+```
+
+Then run the RF3-enabled preset:
+
+```bash
+conda run -n proteina complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
+    ++run_name=my_binder_mps_rf3 \
+    ++generation.task_name=02_PDL1
+```
+
 ### Validate Before Running
 
 ```bash
 complexa validate design configs/search_binder_local_pipeline.yaml
 complexa validate design configs/search_ligand_binder_local_pipeline.yaml
 complexa validate design configs/search_ame_local_pipeline.yaml
+
+# Apple Silicon (MPS presets)
+complexa validate design configs/search_binder_local_pipeline_mps.yaml
+complexa validate design configs/search_ligand_binder_local_pipeline_mps.yaml
+complexa validate design configs/search_ame_local_pipeline_mps.yaml
+
+# Apple Silicon (MPS + RF3 presets)
+complexa validate design configs/search_binder_local_pipeline_mps_rf3.yaml
+complexa validate design configs/search_ligand_binder_local_pipeline_mps_rf3.yaml
+complexa validate design configs/search_ame_local_pipeline_mps_rf3.yaml
 ```
 
 ### Individual Stages
@@ -239,8 +439,14 @@ complexa design configs/search_binder_local_pipeline.yaml \
 | Config | Use case |
 |--------|----------|
 | `search_binder_local_pipeline.yaml` | Protein-protein binder design (local) |
+| `search_binder_local_pipeline_mps.yaml` | Protein-protein binder design (Apple Silicon / MPS preset) |
+| `search_binder_local_pipeline_mps_rf3.yaml` | Protein-protein binder design (Apple Silicon / MPS + RF3 preset) |
 | `search_ligand_binder_local_pipeline.yaml` | Small-molecule binder design (local) |
+| `search_ligand_binder_local_pipeline_mps.yaml` | Small-molecule binder design (Apple Silicon / MPS preset) |
+| `search_ligand_binder_local_pipeline_mps_rf3.yaml` | Small-molecule binder design (Apple Silicon / MPS + RF3 preset) |
 | `search_ame_local_pipeline.yaml` | AME motif scaffolding (local) |
+| `search_ame_local_pipeline_mps.yaml` | AME motif scaffolding (Apple Silicon / MPS preset) |
+| `search_ame_local_pipeline_mps_rf3.yaml` | AME motif scaffolding (Apple Silicon / MPS + RF3 preset) |
 | `search_binder_pipeline.yaml` | Protein binder design (SLURM cluster) |
 
 ---
@@ -377,7 +583,29 @@ hotspot_residues: [A45, A67, A89, A102]
 
 ### Import Errors
 
-Set PYTHONPATH if running without installation:
+If you see `ModuleNotFoundError: No module named 'openfold'`:
+
+- Complexa expects vendored OpenFold at `community_models/openfold`.
+- Regenerate and source env setup:
+
+```bash
+complexa init uv --force
+source env.sh
+```
+
+- Install Complexa into your dedicated runtime env (recommended: `proteina`):
+
+```bash
+conda run -n proteina pip install -e .
+```
+
+- If you instead see `ModuleNotFoundError: No module named 'Bio'`, install Biopython in the same runtime env:
+
+```bash
+conda run -n proteina pip install biopython
+```
+
+Manual fallback (if you are not using `env.sh`):
 
 ```bash
 export PYTHONPATH=/path/to/project/src:/path/to/project/community_models:$PYTHONPATH
@@ -403,6 +631,31 @@ RF3 requires `RF3_CKPT_PATH` and `RF3_EXEC_PATH` to be set. Add them to your `.e
 export RF3_CKPT_PATH=/path/to/rf3_latest.pt
 export RF3_EXEC_PATH=/path/to/rf3
 ```
+
+Recommended on macOS: keep Foundry in a separate `foundry` env and set:
+
+```bash
+export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
+export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
+```
+
+### MPS Unavailable (`torch.backends.mps.is_available() == False`)
+
+For Apple Silicon presets, Complexa now logs backend diagnostics automatically (torch version, macOS version, MPS built/available state, and runtime reason).
+
+Quick check in your runtime env:
+
+```bash
+conda run -n proteina python -c "import torch; print('mps_built', torch.backends.mps.is_built()); print('mps_available', torch.backends.mps.is_available())"
+```
+
+If you want to explicitly request MPS selection when available:
+
+```bash
+export COMPLEXA_ACCELERATOR=mps
+```
+
+If MPS is still unavailable, Complexa will fall back to CPU and print the exact PyTorch runtime reason in logs.
 
 ### SLURM Job Failures
 

@@ -80,7 +80,9 @@ Proteina-Complexa designs have been experimentally validated across diverse prot
 
 ### Option 1: UV Environment (Recommended)
 
-> **Note**: Requires Ubuntu 22.04+ or equivalent. Ubuntu 20.04 will throw GLIBC errors due to older system libraries. Use Docker (Option 2) for older systems.
+> **Platform support:** Linux and macOS are supported. For full CUDA-heavy workflows (AF2/RF3 reward-guided search and binder refolding), Linux + NVIDIA GPU is recommended. For Apple Silicon, use the dedicated `*_mps.yaml` presets (or `*_mps_rf3.yaml` when RF3 is available) documented below.
+>
+> **Linux note:** Ubuntu 22.04+ is recommended. Ubuntu 20.04 may throw GLIBC errors due to older system libraries.
 
 ```bash
 git clone https://github.com/NVIDIA-Digital-Bio/Proteina-Complexa
@@ -90,6 +92,120 @@ cd Proteina-Complexa
 
 # Activate the environment
 source .venv/bin/activate
+```
+
+#### macOS (Apple Silicon) Notes
+
+`build_uv_env.sh` auto-detects Apple Silicon and configures a compatible environment (PyTorch with MPS support, no CUDA-only wheel pins, JAX CPU fallback).
+
+For first-time setup on macOS, use two separate conda environments:
+
+- `foundry` -- install Foundry (RF3 + ProteinMPNN/LigandMPNN + AtomWorks)
+- `proteina` -- install and run Proteina-Complexa
+
+This separation avoids dependency conflicts and is the recommended setup for Apple Silicon.
+
+From-scratch setup:
+
+```bash
+git clone https://github.com/NVIDIA-Digital-Bio/Proteina-Complexa
+cd Proteina-Complexa
+
+# 1) Foundry environment (separate from proteina)
+conda create -n foundry python=3.12 -y
+conda run -n foundry pip install torch
+conda run -n foundry pip install "rc-foundry[all] @ git+https://github.com/fnachon/foundry.git"
+conda run -n foundry foundry install base-models
+
+# 2) Proteina-Complexa runtime environment
+conda create -n proteina python=3.12 -y
+./env/build_uv_env.sh
+source .venv/bin/activate
+conda run -n proteina pip install -e .
+conda run -n proteina complexa init uv --force
+source env.sh
+conda run -n proteina complexa download --complexa-all
+
+# 3) Optional but recommended for ligand workflows
+conda install -n proteina -c conda-forge openbabel -y
+```
+
+Wire Foundry assets into Complexa (RF3 + MPNN checkpoints):
+
+```bash
+export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
+export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
+
+mkdir -p community_models/ProteinMPNN/vanilla_model_weights
+mkdir -p community_models/ProteinMPNN/ca_model_weights
+mkdir -p community_models/ProteinMPNN/soluble_model_weights
+mkdir -p community_models/LigandMPNN/model_params
+
+ln -sf $HOME/.foundry/checkpoints/proteinmpnn_v_48_020.pt community_models/ProteinMPNN/vanilla_model_weights/v_48_020.pt
+ln -sf $HOME/.foundry/checkpoints/proteinmpnn_v_48_020.pt community_models/ProteinMPNN/ca_model_weights/v_48_020.pt
+ln -sf $HOME/.foundry/checkpoints/proteinmpnn_v_48_020.pt community_models/ProteinMPNN/soluble_model_weights/v_48_020.pt
+ln -sf $HOME/.foundry/checkpoints/proteinmpnn_v_48_020.pt community_models/LigandMPNN/model_params/proteinmpnn_v_48_020.pt
+ln -sf $HOME/.foundry/checkpoints/ligandmpnn_v_32_010_25.pt community_models/LigandMPNN/model_params/ligandmpnn_v_32_010_25.pt
+```
+
+Use the MPS-ready pipeline presets:
+
+- `configs/search_binder_local_pipeline_mps.yaml`
+- `configs/search_ligand_binder_local_pipeline_mps.yaml`
+- `configs/search_ame_local_pipeline_mps.yaml`
+
+RF3-enabled MPS presets (for one-command RF3 refolding workflow):
+
+- `configs/search_binder_local_pipeline_mps_rf3.yaml`
+- `configs/search_ligand_binder_local_pipeline_mps_rf3.yaml`
+- `configs/search_ame_local_pipeline_mps_rf3.yaml`
+
+OpenFold on macOS:
+
+- Proteina-Complexa uses the vendored `community_models/openfold` package.
+- You do not need to install pip `openfold` or `openfold-3` for standard Complexa runs.
+- Regenerate and source environment setup so `PYTHONPATH` includes vendored community models:
+
+```bash
+complexa init uv --force
+source env.sh
+```
+
+- Install Complexa in your dedicated runtime env (for example `proteina`):
+
+```bash
+conda run -n proteina pip install -e .
+```
+
+These presets are designed for out-of-the-box local runs on Apple Silicon:
+
+- force `single-pass` generation (no reward-guided search)
+- disable RF3/ColabDesign binder refolding metrics by default
+- keep monomer + ESM evaluation enabled
+- set `PYTORCH_ENABLE_MPS_FALLBACK=1`
+
+Example:
+
+```bash
+complexa validate design configs/search_binder_local_pipeline_mps.yaml
+complexa design configs/search_binder_local_pipeline_mps.yaml \
+    ++run_name=pdl1_mps \
+    ++generation.task_name=02_PDL1
+```
+
+Optional: enable RF3-backed binder refolding on macOS
+
+Run Complexa from your dedicated `proteina` env. If RF3 is installed in a separate `foundry` env (recommended; e.g. from `https://github.com/fnachon/foundry`), point `RF3_EXEC_PATH` to that executable:
+
+```bash
+# Resolve RF3 executable from the foundry env
+export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
+export RF3_CKPT_PATH=/absolute/path/to/rf3_latest.pt
+
+# Run full pipeline from proteina env with RF3-enabled MPS preset
+conda run -n proteina complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
+    ++run_name=pdl1_mps_rf3 \
+    ++generation.task_name=02_PDL1
 ```
 
 > **Known Issue: tmol install fails on Python 3.12 for some users**
@@ -239,6 +355,9 @@ After configuring checkpoint paths and environment variables, verify everything 
 ```bash
 # Validate the config resolves without errors
 complexa validate design configs/search_binder_local_pipeline.yaml
+
+# Apple Silicon (MPS preset)
+complexa validate design configs/search_binder_local_pipeline_mps.yaml
 ```
 
 > **Detailed config reference**: See [Configuration Guide](docs/CONFIGURATION_GUIDE.md) for all YAML fields — search algorithms, reward model weights, evaluation settings, analysis thresholds, and training configs.
@@ -253,6 +372,8 @@ complexa validate design configs/search_binder_local_pipeline.yaml
 > ```
 >
 > Or edit `gen_njobs` / `eval_njobs` directly in the pipeline YAML.
+
+Linux / CUDA:
 
 ```bash
 # 1. Setup
@@ -272,6 +393,26 @@ complexa design configs/search_binder_local_pipeline.yaml \
 complexa status configs/search_binder_local_pipeline.yaml
 ```
 
+macOS / Apple Silicon (MPS preset):
+
+```bash
+# 1. Setup
+source .venv/bin/activate
+complexa init
+complexa download --all
+
+# 2. Validate MPS config
+complexa validate design configs/search_binder_local_pipeline_mps.yaml
+
+# 3. Design binders for PDL1
+complexa design configs/search_binder_local_pipeline_mps.yaml \
+    ++run_name=pdl1_mps \
+    ++generation.task_name=02_PDL1
+
+# 4. Check results
+complexa status configs/search_binder_local_pipeline_mps.yaml
+```
+
 Other pipeline types:
 
 ```bash
@@ -289,6 +430,28 @@ complexa design configs/search_ame_local_pipeline.yaml \
 complexa design configs/search_motif_local_pipeline.yaml \
     ++run_name=motif_test \
     ++generation.task_name=1YCR_AA
+
+# Apple Silicon (MPS presets)
+complexa design configs/search_ligand_binder_local_pipeline_mps.yaml \
+    ++run_name=ligand_mps \
+    ++generation.task_name=39_7V11_LIGAND
+
+complexa design configs/search_ame_local_pipeline_mps.yaml \
+    ++run_name=ame_mps \
+    ++generation.task_name=M0096_1chm
+
+# Apple Silicon (MPS + RF3 presets)
+complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
+    ++run_name=binder_mps_rf3 \
+    ++generation.task_name=02_PDL1
+
+complexa design configs/search_ligand_binder_local_pipeline_mps_rf3.yaml \
+    ++run_name=ligand_mps_rf3 \
+    ++generation.task_name=39_7V11_LIGAND
+
+complexa design configs/search_ame_local_pipeline_mps_rf3.yaml \
+    ++run_name=ame_mps_rf3 \
+    ++generation.task_name=M0096_1chm
 ```
 
 > **Known limitation: TMOL reward not supported for ligand binder / AME pipelines**
@@ -356,6 +519,22 @@ There are four design pipelines, each with its own config and model:
 | Ligand Binder | `search_ligand_binder_local_pipeline.yaml` | Ligand model (LoRA) | Design binders for small-molecule ligands |
 | AME (Motif + Ligand) | `search_ame_local_pipeline.yaml` | AME model (LoRA) | Scaffold functional motifs with ligand context |
 | Monomer Motif | `search_motif_local_pipeline.yaml` | AME model (LoRA) | Scaffold structural motifs into monomer proteins |
+
+Apple Silicon presets for local Mac runs:
+
+| Pipeline | MPS Config | Notes |
+|----------|------------|-------|
+| Protein Binder | `search_binder_local_pipeline_mps.yaml` | Single-pass generation, monomer/ESM evaluation by default |
+| Ligand Binder | `search_ligand_binder_local_pipeline_mps.yaml` | Disables RF3-dependent binder metrics by default |
+| AME (Motif + Ligand) | `search_ame_local_pipeline_mps.yaml` | Disables motif-binder RF3 refolding by default |
+
+Apple Silicon + RF3 presets:
+
+| Pipeline | MPS+RF3 Config | Notes |
+|----------|----------------|-------|
+| Protein Binder | `search_binder_local_pipeline_mps_rf3.yaml` | Enables RF3 binder refolding metrics |
+| Ligand Binder | `search_ligand_binder_local_pipeline_mps_rf3.yaml` | Enables RF3 binder refolding metrics |
+| AME (Motif + Ligand) | `search_ame_local_pipeline_mps_rf3.yaml` | Enables RF3 motif-binder refolding metrics |
 
 Each pipeline runs four stages: **generate → filter → evaluate → analyze**. Run the full pipeline with `complexa design`, or run stages individually (`complexa generate`, `complexa filter`, etc.). See the [Inference Guide](docs/INFERENCE.md) for individual stages, and advanced usage.
 
@@ -463,8 +642,14 @@ Proteina-Complexa/
 │   └── analyze.py                   # Analysis entry point
 ├── configs/                         # Hydra configuration files
 │   ├── search_binder_local_pipeline.yaml         # Protein binder pipeline (local)
+│   ├── search_binder_local_pipeline_mps.yaml     # Protein binder pipeline (Apple Silicon / MPS preset)
+│   ├── search_binder_local_pipeline_mps_rf3.yaml # Protein binder pipeline (Apple Silicon / MPS + RF3 preset)
 │   ├── search_ligand_binder_local_pipeline.yaml  # Ligand binder pipeline (local)
+│   ├── search_ligand_binder_local_pipeline_mps.yaml  # Ligand binder pipeline (Apple Silicon / MPS preset)
+│   ├── search_ligand_binder_local_pipeline_mps_rf3.yaml  # Ligand binder pipeline (Apple Silicon / MPS + RF3 preset)
 │   ├── search_ame_local_pipeline.yaml            # AME motif scaffolding pipeline (local)
+│   ├── search_ame_local_pipeline_mps.yaml        # AME motif scaffolding pipeline (Apple Silicon / MPS preset)
+│   ├── search_ame_local_pipeline_mps_rf3.yaml    # AME motif scaffolding pipeline (Apple Silicon / MPS + RF3 preset)
 │   ├── search_binder_pipeline.yaml               # Protein binder pipeline 
 │   ├── evaluate*.yaml               # Standalone evaluation configs
 │   ├── analyze*.yaml                # Standalone analysis configs

@@ -15,6 +15,8 @@ import pandas as pd
 import torch
 from loguru import logger
 
+from proteinfoundation.utils.device_utils import clear_backend_cache, get_best_torch_device
+
 # =============================================================================
 # Safe Imports
 # =============================================================================
@@ -59,7 +61,7 @@ def compute_pseudo_perplexity(
     model,
     tokenizer,
     sequence: str,
-    device: str = "cuda",
+    device: str = "cpu",
 ) -> tuple[float, float]:
     """Compute pseudo-perplexity for a single sequence."""
     if not sequence or len(sequence) == 0:
@@ -113,7 +115,7 @@ def _resolve_cache_dir() -> str:
 
     Priority:
     1. CACHE_DIR environment variable
-    2. ~/.cache (default)
+    2. ~/.cache/huggingface (default)
 
     Note: ESM_DIR is handled separately as a local model path, not as a
     download cache. This prevents HuggingFace from downloading model files
@@ -125,7 +127,9 @@ def _resolve_cache_dir() -> str:
         logger.debug(f"Using CACHE_DIR from environment: {cache_dir}")
         return cache_dir
 
-    default_cache = os.path.expanduser("~/.cache")
+    # Match HuggingFace default cache root to maximize cache reuse with
+    # existing downloads from other tools.
+    default_cache = os.path.expanduser("~/.cache/huggingface")
     logger.debug(f"Using default cache: {default_cache}")
     return default_cache
 
@@ -133,7 +137,7 @@ def _resolve_cache_dir() -> str:
 def get_esm_model(
     model_name: str = DEFAULT_ESM_MODEL,
     device: str | None = None,
-    force_offline: bool = True,
+    force_offline: bool = False,
 ):
     """Get or load the ESM model and tokenizer (cached globally).
 
@@ -142,8 +146,8 @@ def get_esm_model(
 
     Args:
         model_name: HuggingFace model name (default: facebook/esm2_t33_650M_UR50D)
-        device: Device to load model on (default: auto-detect cuda/cpu)
-        force_offline: If True, set HF_HUB_OFFLINE=1 to prevent network requests
+        device: Device to load model on (default: auto-detect cuda/mps/cpu)
+        force_offline: If True, enforce local-only loading with HF_HUB_OFFLINE=1
 
     Returns:
         Tuple of (model, tokenizer, device)
@@ -162,7 +166,7 @@ def get_esm_model(
             _ESM_MODEL_CACHE["device"],
         )
 
-    # Set offline mode to prevent network requests
+    previous_hf_hub_offline = os.environ.get("HF_HUB_OFFLINE")
     if force_offline:
         os.environ["HF_HUB_OFFLINE"] = "1"
         logger.debug("Set HF_HUB_OFFLINE=1 to force offline mode")
@@ -171,53 +175,62 @@ def get_esm_model(
     cache_dir = _resolve_cache_dir()
 
     if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+        device = str(get_best_torch_device())
 
     # Try ESM_DIR first (pre-downloaded local copy), then HF cache
     load_locations = []
     if esm_dir:
         load_locations.append(("ESM_DIR", esm_dir))
     load_locations.append(("cache", cache_dir))
+    legacy_cache_dir = os.path.expanduser("~/.cache")
+    if os.path.normpath(cache_dir) != os.path.normpath(legacy_cache_dir):
+        load_locations.append(("legacy-cache", legacy_cache_dir))
 
     model = None
     tokenizer = None
+    try:
+        for label, loc in load_locations:
+            logger.info(f"Loading ESM model: {model_name} ({label}: {loc})")
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(
+                    model_name,
+                    cache_dir=loc,
+                    local_files_only=True,
+                )
+                model = AutoModelForMaskedLM.from_pretrained(
+                    model_name,
+                    cache_dir=loc,
+                    local_files_only=True,
+                )
+                logger.info(f"Loaded ESM model from {label} (offline)")
+                break
+            except Exception:
+                logger.debug(f"ESM model not found in {label}: {loc}")
+                continue
 
-    for label, loc in load_locations:
-        logger.info(f"Loading ESM model: {model_name} ({label}: {loc})")
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(
-                model_name,
-                cache_dir=loc,
-                local_files_only=True,
-            )
-            model = AutoModelForMaskedLM.from_pretrained(
-                model_name,
-                cache_dir=loc,
-                local_files_only=True,
-            )
-            logger.info(f"Loaded ESM model from {label} (offline)")
-            break
-        except Exception:
-            logger.debug(f"ESM model not found in {label}: {loc}")
-            continue
+        if model is None:
+            if force_offline:
+                search_paths = ", ".join(loc for _, loc in load_locations)
+                logger.error(
+                    f"Failed to load ESM model from local paths: {search_paths}\n"
+                    f"The model may not be downloaded yet. To download, run:\n"
+                    f'  python -c "from transformers import AutoTokenizer, AutoModelForMaskedLM; '
+                    f"AutoTokenizer.from_pretrained('{model_name}', cache_dir='{cache_dir}'); "
+                    f"AutoModelForMaskedLM.from_pretrained('{model_name}', cache_dir='{cache_dir}')\""
+                )
+                raise RuntimeError(f"ESM model not found in local paths: {search_paths}")
 
-    if model is None:
+            # If not forcing offline, download to cache_dir (not ESM_DIR)
+            logger.info(f"Downloading ESM model from HuggingFace to {cache_dir}...")
+            tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
+            model = AutoModelForMaskedLM.from_pretrained(model_name, cache_dir=cache_dir)
+    finally:
+        # Restore HF_HUB_OFFLINE so this function does not leak environment changes.
         if force_offline:
-            search_paths = ", ".join(loc for _, loc in load_locations)
-            logger.error(
-                f"Failed to load ESM model from local paths: {search_paths}\n"
-                f"The model may not be downloaded yet. To download, run:\n"
-                f'  python -c "from transformers import AutoTokenizer, AutoModelForMaskedLM; '
-                f"AutoTokenizer.from_pretrained('{model_name}', cache_dir='{cache_dir}'); "
-                f"AutoModelForMaskedLM.from_pretrained('{model_name}', cache_dir='{cache_dir}')\""
-            )
-            raise RuntimeError(f"ESM model not found in local paths: {search_paths}")
-
-        # If not forcing offline, download to cache_dir (not ESM_DIR)
-        logger.info(f"Downloading ESM model from HuggingFace to {cache_dir}...")
-        os.environ.pop("HF_HUB_OFFLINE", None)
-        tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=cache_dir)
-        model = AutoModelForMaskedLM.from_pretrained(model_name, cache_dir=cache_dir)
+            if previous_hf_hub_offline is None:
+                os.environ.pop("HF_HUB_OFFLINE", None)
+            else:
+                os.environ["HF_HUB_OFFLINE"] = previous_hf_hub_offline
 
     model = model.to(device)
     model.eval()
@@ -234,10 +247,11 @@ def get_esm_model(
 
 
 def clear_esm_cache():
-    """Clear the cached ESM model to free GPU memory."""
+    """Clear the cached ESM model to free backend memory."""
     global _ESM_MODEL_CACHE
 
     if _ESM_MODEL_CACHE["model"] is not None:
+        cache_device = _ESM_MODEL_CACHE["device"]
         del _ESM_MODEL_CACHE["model"]
         del _ESM_MODEL_CACHE["tokenizer"]
         _ESM_MODEL_CACHE = {
@@ -246,14 +260,14 @@ def clear_esm_cache():
             "model_name": None,
             "device": None,
         }
-        torch.cuda.empty_cache()
+        clear_backend_cache(cache_device)
         logger.info("Cleared ESM model cache")
 
 
 def compute_esm_ppl_for_sequences(
     sequences: list[str],
     model_name: str = DEFAULT_ESM_MODEL,
-    force_offline: bool = True,
+    force_offline: bool = False,
 ) -> pd.DataFrame:
     """Compute ESM pseudo-perplexity for a list of sequences.
 
@@ -311,7 +325,7 @@ def compute_esm_ppl_for_pdbs(
     pdb_paths: list[str],
     protein_type: str = "binder",
     model_name: str = DEFAULT_ESM_MODEL,
-    force_offline: bool = True,
+    force_offline: bool = False,
 ) -> pd.DataFrame:
     """
     Compute ESM pseudo-perplexity for sequences extracted from PDB files.

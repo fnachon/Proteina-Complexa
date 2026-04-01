@@ -1,15 +1,28 @@
 import torch
 from atomworks.constants import AA_LIKE_CHEM_TYPES, DNA_LIKE_CHEM_TYPES, RNA_LIKE_CHEM_TYPES
 from atomworks.ml.encoding_definitions import TokenEncoding
-from graphein.protein.resi_atoms import ATOM_NUMBERING
 from openfold.np.residue_constants import atom_types
+
+try:
+    from graphein.protein.resi_atoms import ATOM_NUMBERING
+except ModuleNotFoundError:
+    # Fallback for environments without graphein.
+    # Using OpenFold ordering keeps tensor conversions functional.
+    ATOM_NUMBERING = {atom: i for i, atom in enumerate(atom_types)}
 
 # PDB and OpenFold have different atom ordering, these utils convert between the two
 # PDB ordering: https://cdn.rcsb.org/wwpdb/docs/documentation/file-format/PDB_format_1992.pdf
 # OpenFold ordering: https://github.com/aqlaboratory/openfold/blob/f6c875b3c8e3e873a932cbe3b31f94ae011f6fd4/openfold/np/residue_constants.py#L556
 # more background: https://kdidi.netlify.app/blog/proteins/2024-02-03-protein-representations/
-PDB_TO_OPENFOLD_INDEX_TENSOR = torch.tensor([ATOM_NUMBERING[atom] for atom in atom_types])
-OPENFOLD_TO_PDB_INDEX_TENSOR = torch.tensor([atom_types.index(atom) for atom in ATOM_NUMBERING])
+if isinstance(ATOM_NUMBERING, dict):
+    _PDB_ATOM_ORDER = list(ATOM_NUMBERING.keys())
+    _ATOM_TO_PDB_IDX = ATOM_NUMBERING
+else:
+    _PDB_ATOM_ORDER = list(ATOM_NUMBERING)
+    _ATOM_TO_PDB_IDX = {atom: i for i, atom in enumerate(_PDB_ATOM_ORDER)}
+
+PDB_TO_OPENFOLD_INDEX_TENSOR = torch.tensor([_ATOM_TO_PDB_IDX[atom] for atom in atom_types])
+OPENFOLD_TO_PDB_INDEX_TENSOR = torch.tensor([atom_types.index(atom) for atom in _PDB_ATOM_ORDER])
 
 AA_CHARACTER_PROTORP = {
     "ALA": "A",

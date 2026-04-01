@@ -23,7 +23,6 @@ import logging
 
 import numpy as np
 import pandas as pd
-import toolz
 from atomworks.common import KeyToIntMapper, exists
 from atomworks.constants import ELEMENT_NAME_TO_ATOMIC_NUMBER
 from atomworks.enums import ChainType
@@ -50,7 +49,7 @@ def category_to_df(cif_block: CIFBlock, category: str) -> pd.DataFrame | None:
 def category_to_dict(cif_block: CIFBlock, category: str) -> dict[str, np.ndarray]:
     """Convert a CIF block category to a dictionary of numpy arrays."""
     if exists(cif_block.get(category)):
-        return toolz.valmap(lambda x: x.as_array(), dict(cif_block[category]))
+        return {k: v.as_array() for k, v in dict(cif_block[category]).items()}
     return {}
 
 

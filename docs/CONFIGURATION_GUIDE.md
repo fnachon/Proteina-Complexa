@@ -87,7 +87,14 @@ The pipeline uses a modular config system. A top-level pipeline config composes 
 
 ```
 configs/search_binder_local_pipeline.yaml          # Protein binder pipeline
+configs/search_binder_local_pipeline_mps.yaml      # Protein binder (Apple Silicon / MPS preset)
+configs/search_binder_local_pipeline_mps_rf3.yaml  # Protein binder (Apple Silicon / MPS + RF3 preset)
 configs/search_ligand_binder_local_pipeline.yaml    # Ligand binder pipeline
+configs/search_ligand_binder_local_pipeline_mps.yaml # Ligand binder (Apple Silicon / MPS preset)
+configs/search_ligand_binder_local_pipeline_mps_rf3.yaml # Ligand binder (Apple Silicon / MPS + RF3 preset)
+configs/search_ame_local_pipeline.yaml              # AME motif scaffolding pipeline
+configs/search_ame_local_pipeline_mps.yaml          # AME motif scaffolding (Apple Silicon / MPS preset)
+configs/search_ame_local_pipeline_mps_rf3.yaml      # AME motif scaffolding (Apple Silicon / MPS + RF3 preset)
 │
 ├── pipeline/binder/binder_generate.yaml          → generation.*
 │   ├── pipeline/binder/model_sampling.yaml       → generation.args.*, generation.model.*
@@ -173,6 +180,72 @@ eval_njobs: 2
 - Uses `ligand_binder_evaluate` (`rf3_latest` folding, `ligand_mpnn` inverse folding)
 - Requires LoRA config matching the ligand checkpoint
 - Target definitions come from `configs/targets/ligand_targets_dict.yaml`
+
+### Apple Silicon (MPS) Presets
+
+For local macOS runs on Apple Silicon, use the dedicated top-level presets:
+
+- `configs/search_binder_local_pipeline_mps.yaml`
+- `configs/search_ligand_binder_local_pipeline_mps.yaml`
+- `configs/search_ame_local_pipeline_mps.yaml`
+
+For RF3-enabled Apple Silicon workflows, use:
+
+- `configs/search_binder_local_pipeline_mps_rf3.yaml`
+- `configs/search_ligand_binder_local_pipeline_mps_rf3.yaml`
+- `configs/search_ame_local_pipeline_mps_rf3.yaml`
+
+Recommended dependency layout on macOS:
+
+- Keep Proteina-Complexa in a dedicated runtime env (for example `proteina`).
+- Install Foundry in a separate env (for example `foundry`) from
+  <https://github.com/fnachon/foundry>.
+- Use Foundry to provide RF3 + ProteinMPNN/LigandMPNN + AtomWorks dependencies.
+
+Minimal setup example:
+
+```bash
+conda create -n foundry python=3.12 -y
+conda run -n foundry pip install torch
+conda run -n foundry pip install "rc-foundry[all] @ git+https://github.com/fnachon/foundry.git"
+conda run -n foundry foundry install base-models
+
+conda create -n proteina python=3.12 -y
+conda run -n proteina pip install -e .
+```
+
+Each preset inherits from its corresponding local pipeline and applies MPS-safe defaults:
+
+- `generation.search.algorithm: single-pass`
+- `generation.reward_model: null`
+- `generation.refinement.algorithm: null`
+- `gen_njobs: 1`, `eval_njobs: 1`
+- `env_vars.PYTORCH_ENABLE_MPS_FALLBACK: "1"`
+
+Evaluation defaults in MPS presets:
+
+- Protein/Ligand binder MPS presets set `metric.compute_binder_metrics: false`
+- AME MPS preset sets `metric.compute_motif_binder_metrics: false`
+- All three keep monomer + ESM metrics enabled and set `aggregation.analysis_modes: [monomer]`
+
+Example:
+
+```bash
+complexa design configs/search_binder_local_pipeline_mps.yaml \
+    ++run_name=my_binder_mps \
+    ++generation.task_name=02_PDL1
+```
+
+Optional RF3 path on macOS (Foundry in separate env):
+
+```bash
+export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
+export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
+
+complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
+    ++run_name=my_binder_mps_rf3 \
+    ++generation.task_name=02_PDL1
+```
 
 ### Search Algorithms
 
@@ -471,6 +544,8 @@ reward_model:
 **`has_clash`:** Converted from boolean to numeric (1.0/0.0). To penalize clashes, set a negative weight (e.g., `has_clash: -5.0`).
 
 **Environment variables required:** `RF3_CKPT_PATH` and `RF3_EXEC_PATH` must be set.
+On macOS, recommended source is Foundry installed in a separate `foundry` env from
+<https://github.com/fnachon/foundry>.
 
 **CLI:**
 
@@ -612,6 +687,34 @@ complexa analyze configs/search_binder_local_pipeline.yaml
 complexa design configs/search_ligand_binder_local_pipeline.yaml \
     ++run_name=ligand_test \
     ++generation.task_name=39_7V11_LIGAND
+```
+
+**Apple Silicon (MPS presets):**
+
+```bash
+complexa design configs/search_binder_local_pipeline_mps.yaml \
+    ++run_name=binder_mps \
+    ++generation.task_name=02_PDL1
+
+complexa design configs/search_ligand_binder_local_pipeline_mps.yaml \
+    ++run_name=ligand_mps \
+    ++generation.task_name=39_7V11_LIGAND
+
+complexa design configs/search_ame_local_pipeline_mps.yaml \
+    ++run_name=ame_mps \
+    ++generation.task_name=M0096_1chm
+
+complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
+    ++run_name=binder_mps_rf3 \
+    ++generation.task_name=02_PDL1
+
+complexa design configs/search_ligand_binder_local_pipeline_mps_rf3.yaml \
+    ++run_name=ligand_mps_rf3 \
+    ++generation.task_name=39_7V11_LIGAND
+
+complexa design configs/search_ame_local_pipeline_mps_rf3.yaml \
+    ++run_name=ame_mps_rf3 \
+    ++generation.task_name=M0096_1chm
 ```
 
 **Quick local test (reduced samples):**

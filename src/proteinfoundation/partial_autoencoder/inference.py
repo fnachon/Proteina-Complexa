@@ -13,6 +13,11 @@ from loguru import logger
 from sklearn.decomposition import PCA
 
 from proteinfoundation.partial_autoencoder.autoencoder import AutoEncoder
+from proteinfoundation.utils.device_utils import (
+    format_backend_diagnostics,
+    get_best_torch_device,
+    get_lightning_accelerator,
+)
 
 COLORS_RT = [
     "#FF0000",  # Red
@@ -103,7 +108,11 @@ def setup(
     """
     logger.info(" ".join(sys.argv))
 
-    assert torch.cuda.is_available(), "CUDA not available"  # Needed for ESMfold and designability
+    run_device = get_best_torch_device()
+    if run_device.type == "cpu":
+        logger.warning(f"No CUDA/MPS backend detected. Falling back to CPU. {format_backend_diagnostics()}")
+    else:
+        logger.info(f"Using {run_device.type.upper()} backend. {format_backend_diagnostics()}")
     logger.add(
         sys.stdout,
         format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {file}:{line} | {message}",
@@ -296,7 +305,9 @@ def main() -> None:
     model = AutoEncoder.load_from_checkpoint(cfg.ckpt_file)
 
     # Make predictions, store them together with inputs
-    trainer = L.Trainer(accelerator="gpu", devices=1, limit_predict_batches=int(cfg.n_structs / cfg.bs))
+    trainer_accelerator = get_lightning_accelerator("gpu")
+    trainer = L.Trainer(accelerator=trainer_accelerator, devices=1, limit_predict_batches=int(cfg.n_structs / cfg.bs))
+    logger.info(f"Autoencoder inference trainer accelerator: {trainer_accelerator}")
     predictions = trainer.predict(model, dataloader)
     # List of tuples, each tuple is (data_batch, predicted_batch)
     # and the predicted batch has all outputs from the endocer and decoder

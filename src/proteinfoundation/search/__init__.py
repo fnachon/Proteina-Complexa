@@ -9,8 +9,12 @@ from proteinfoundation.search.beam_search import BeamSearch
 from proteinfoundation.search.best_of_n_search import BestOfNSearch
 from proteinfoundation.search.fk_steering import FKSteering
 from proteinfoundation.search.mcts_search import MCTSSearch
-from proteinfoundation.search.sequence_hallucination import SequenceHallucination
 from proteinfoundation.search.single_pass_generation import SinglePassGeneration
+
+try:
+    from proteinfoundation.search.sequence_hallucination import SequenceHallucination
+except ModuleNotFoundError:
+    SequenceHallucination = None
 
 __all__ = [
     "BaseSearch",
@@ -19,6 +23,8 @@ __all__ = [
     "FKSteering",
     "MCTSSearch",
     "SearchContext",
-    "SequenceHallucination",
     "SinglePassGeneration",
 ]
+
+if SequenceHallucination is not None:
+    __all__.append("SequenceHallucination")

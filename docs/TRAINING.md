@@ -14,11 +14,12 @@ This guide covers training Proteina-Complexa models for protein binder design.
 
 1. [Overview](#overview)
 2. [Quick Start](#quick-start)
-3. [Training Configurations](#training-configurations)
-4. [Dataset Preparation](#dataset-preparation)
-5. [Hyperparameters](#hyperparameters)
-6. [Checkpoints](#checkpoints)
-7. [Multi-Node Training](#multi-node-training)
+3. [macOS Quick Start (Apple Silicon)](#macos-quick-start-apple-silicon)
+4. [Training Configurations](#training-configurations)
+5. [Dataset Preparation](#dataset-preparation)
+6. [Hyperparameters](#hyperparameters)
+7. [Checkpoints](#checkpoints)
+8. [Multi-Node Training](#multi-node-training)
 
 ---
 
@@ -66,6 +67,36 @@ python -m proteinfoundation.train \
 python -m proteinfoundation.train \
     --config-name finetune_local_latents_binder_comb_extra_lenient_pdb
 ```
+
+---
+
+## macOS Quick Start (Apple Silicon)
+
+Use this path for local development training on Apple Silicon (`mps`). For large-scale or production training, use Linux + NVIDIA GPUs.
+
+```bash
+# 1) Build and activate env
+./env/build_uv_env.sh
+source .venv/bin/activate
+
+# 2) Optional but recommended on Apple Silicon
+export PYTORCH_ENABLE_MPS_FALLBACK=1
+
+# 3) Run a short single-device sanity run
+python -m proteinfoundation.train \
+    --config-name finetune_local_latents_binder_comb_extra_lenient_pdb \
+    +single=true \
+    +nolog=true \
+    ++trainer.max_epochs=1 \
+    ++dataloader.batch_size=1
+```
+
+Notes:
+
+- On Apple Silicon, training runs with MPS when available and falls back to CPU for unsupported ops.
+- Keep batch size small (`1-2`) to avoid OOM.
+- Multi-node / high-throughput DDP training is intended for CUDA clusters.
+- For inference on macOS, use `configs/*_mps.yaml` presets (or `configs/*_mps_rf3.yaml` when RF3 is configured; see [Inference Guide](INFERENCE.md)).
 
 ---
 

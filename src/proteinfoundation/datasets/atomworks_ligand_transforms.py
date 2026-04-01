@@ -15,7 +15,11 @@ from atomworks.ml.encoding_definitions import AF3SequenceEncoding
 from atomworks.ml.transforms._checks import check_atom_array_annotation, check_contains_keys, check_is_instance
 from atomworks.ml.transforms.atom_array import get_within_entity_idx
 from atomworks.ml.transforms.base import Transform
-from atomworks.ml.transforms.openbabel_utils import atom_array_from_openbabel, atom_array_to_openbabel
+try:
+    from atomworks.ml.transforms.openbabel_utils import atom_array_from_openbabel, atom_array_to_openbabel
+except ModuleNotFoundError:
+    atom_array_from_openbabel = None
+    atom_array_to_openbabel = None
 from atomworks.ml.utils.token import get_token_starts
 from biotite.structure import AtomArray
 from rdkit import Chem
@@ -287,6 +291,11 @@ class ProteinaLigandTransform(Transform):
         use_rdkit_from_smiles = self.use_rdkit_from_smiles
         use_raw_file = self.use_raw_file  #! this is False for everything but PLINDER
         if use_openbabel:
+            if atom_array_to_openbabel is None or atom_array_from_openbabel is None:
+                raise ModuleNotFoundError(
+                    "OpenBabel support requested but openbabel dependencies are not installed. "
+                    "Install openbabel (e.g. openbabel-wheel) or set use_openbabel=false."
+                )
             obmol = atom_array_to_openbabel(
                 ligand_atom_array,
                 infer_hydrogens=False,

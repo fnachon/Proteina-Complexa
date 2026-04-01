@@ -510,6 +510,41 @@ def validate_generate(config_path: Path) -> ValidationReport:
         report.add_fail("Config parsing", str(e))
         return report
 
+    # MPS diagnostics for macOS-targeted presets
+    env_vars_cfg = cfg.get("env_vars", {}) if isinstance(cfg, dict) else {}
+    is_mps_preset = (
+        "_mps" in config_path.stem
+        or "PYTORCH_ENABLE_MPS_FALLBACK" in env_vars_cfg
+        or str(env_vars_cfg.get("COMPLEXA_ACCELERATOR", "")).lower() == "mps"
+    )
+    if is_mps_preset:
+        try:
+            from proteinfoundation.utils.device_utils import (
+                format_backend_diagnostics,
+                get_mps_unavailable_reason,
+                is_mps_available,
+            )
+
+            if is_mps_available():
+                report.add_pass("MPS backend", "Available")
+            else:
+                reason = get_mps_unavailable_reason() or "Unknown reason"
+                report.add_fail(
+                    "MPS backend",
+                    f"Unavailable: {reason}",
+                    fix_hint=(
+                        "Check backend diagnostics in runtime logs. "
+                        f"Current probe: {format_backend_diagnostics()}"
+                    ),
+                    is_warning=True,
+                )
+        except Exception as e:
+            report.add_fail(
+                "MPS backend",
+                f"Could not run MPS diagnostics: {e}",
+                is_warning=True,
+            )
+
     # Check for Complexa model checkpoint
     # ckpt_path can be a directory, ckpt_name is the filename
     ckpt_path = cfg.get("ckpt_path")

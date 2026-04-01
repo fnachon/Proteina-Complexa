@@ -150,8 +150,20 @@ class SequenceHallucination:
             Samples that failed refinement retain their original values.
         """
         bs = sample_prots["coors"].shape[0]
-        device_id = torch.cuda.current_device()
-        jax_device = jax.devices("gpu")[device_id]
+        if torch.cuda.is_available():
+            device_id = torch.cuda.current_device()
+            try:
+                gpu_devices = jax.devices("gpu")
+            except Exception:
+                gpu_devices = []
+            if gpu_devices:
+                jax_device = gpu_devices[min(device_id, len(gpu_devices) - 1)]
+            else:
+                jax_device = jax.devices("cpu")[0]
+                logger.warning("CUDA detected by PyTorch but unavailable to JAX; using JAX CPU backend.")
+        else:
+            jax_device = jax.devices("cpu")[0]
+            logger.warning("CUDA not available for sequence hallucination; using JAX CPU backend.")
 
         ref_cfg = self.inf_cfg.refinement
         n_hard_iters = ref_cfg.get("n_hard_iters", 5)

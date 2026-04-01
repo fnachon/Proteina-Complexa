@@ -1,0 +1,39 @@
+# AME (Motif + Ligand Binder) Design Pipeline Configuration (Apple Silicon / MPS preset)
+#
+# This preset extends the standard local AME pipeline with MPS-friendly defaults:
+# - generation remains single-pass with no reward model
+# - motif-binder refolding metrics (RF3 path) are disabled during evaluation
+# - monomer metrics remain enabled for quality screening on Apple Silicon
+#
+# Usage:
+#   complexa design configs/search_ame_local_pipeline_mps.yaml ++generation.task_name=M0096_1chm
+
+defaults:
+  - search_ame_local_pipeline
+  - _self_
+
+run_name: search_ame_local_mps
+
+env_vars:
+  USE_V2_COMPLEXA_ARCH: "True"
+  PYTORCH_ENABLE_MPS_FALLBACK: "1"
+
+gen_njobs: 1
+eval_njobs: 1
+
+generation:
+  search:
+    algorithm: single-pass
+  reward_model: null
+  refinement:
+    algorithm: null
+
+metric:
+  # Disable motif-binder refolding metrics (RF3 path) for the MPS preset.
+  compute_motif_binder_metrics: false
+  compute_monomer_metrics: true
+  compute_esm_metrics: true
+  sequence_types: [self]
+
+aggregation:
+  analysis_modes: [monomer]

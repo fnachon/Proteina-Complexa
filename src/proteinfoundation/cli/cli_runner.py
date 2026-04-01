@@ -94,6 +94,16 @@ def _quiet_startup():
         pass
 
 
+def _cuda_available_for_job_splitting() -> bool:
+    """Best-effort CUDA availability check without hard dependency during CLI startup."""
+    try:
+        import torch
+
+        return torch.cuda.is_available()
+    except Exception:
+        return False
+
+
 # =============================================================================
 # Constants
 # =============================================================================
@@ -716,7 +726,8 @@ def run_step(
             for job_id in range(stage_njobs):
                 job_cmd = cmd + [f"++job_id={job_id}"]
                 job_env = env.copy()
-                job_env["CUDA_VISIBLE_DEVICES"] = str(job_id)
+                if _cuda_available_for_job_splitting():
+                    job_env["CUDA_VISIBLE_DEVICES"] = str(job_id)
                 if design_parallel:
                     job_log = stage_log_dir / f"{step_name}_job{job_id}.log"
                     if job_log.exists():
@@ -1659,6 +1670,20 @@ def _generate_env_sh(runtime: str, env_path: Path, env_sh_path: Path) -> None:
             'export CKPT_PATH="${DOCKER_CHECKPOINT_PATH:-$CKPT_PATH}"',
             'export DATA_PATH="${DOCKER_DATA_PATH:-$DATA_PATH}"',
         ]
+
+    lines += [
+        "",
+        "# Ensure source + vendored community models (OpenFold, etc.) are importable",
+        'export COMMUNITY_MODELS_PATH="${COMMUNITY_MODELS_PATH:-${LOCAL_CODE_PATH}/community_models}"',
+        '_prepend_pythonpath() {',
+        '  case ":${PYTHONPATH:-}:" in',
+        '    *":$1:"*) ;;',
+        '    *) export PYTHONPATH="$1${PYTHONPATH:+:$PYTHONPATH}" ;;',
+        "  esac",
+        "}",
+        '_prepend_pythonpath "${LOCAL_CODE_PATH}/src"',
+        '_prepend_pythonpath "${COMMUNITY_MODELS_PATH}"',
+    ]
 
     lines += [
         "",

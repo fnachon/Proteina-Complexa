@@ -6,6 +6,8 @@ from lightning_fabric.utilities import rank_zero_only
 from lightning_utilities.core.rank_zero import rank_prefixed_message
 from omegaconf import DictConfig
 
+from proteinfoundation.utils.device_utils import is_mps_available
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,6 +30,20 @@ def set_accelerator_based_on_availability(cfg: dict | DictConfig):
     Returns:
         None; modifies the input `cfg` object in place.
     """
+    if torch.cuda.is_available():
+        cfg.trainer.accelerator = "gpu"
+        return
+
+    if is_mps_available():
+        logger.warning("CUDA not available - setting accelerator to 'mps'.")
+        assert "trainer" in cfg, "Configuration object must have a 'trainer' key."
+        for key in ["accelerator", "devices_per_node", "num_nodes"]:
+            assert key in cfg.trainer, f"Configuration object must have a 'trainer.{key}' key."
+        cfg.trainer.accelerator = "mps"
+        cfg.trainer.devices_per_node = 1
+        cfg.trainer.num_nodes = 1
+        return
+
     if not torch.cuda.is_available():
         logger.error(
             "No GPUs available - Setting accelerator to 'cpu'. Are you sure you are using the correct configs?"
@@ -40,8 +56,6 @@ def set_accelerator_based_on_availability(cfg: dict | DictConfig):
         cfg.trainer.accelerator = "cpu"
         cfg.trainer.devices_per_node = 1
         cfg.trainer.num_nodes = 1
-    else:
-        cfg.trainer.accelerator = "gpu"
 
 
 class RankedLogger(logging.LoggerAdapter):
