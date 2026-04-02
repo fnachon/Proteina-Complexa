@@ -41,6 +41,7 @@
 import io
 import os
 import re
+import warnings
 from collections.abc import Mapping
 from typing import Any
 
@@ -65,6 +66,58 @@ ModelOutput = Mapping[str, Any]  # Is a nested dict.
 # Complete sequence of chain IDs supported by the PDB format.
 PDB_CHAIN_IDS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 PDB_MAX_CHAINS = len(PDB_CHAIN_IDS)  # := 62.
+PDB_MIN_COORD = -999.999
+PDB_MAX_COORD = 9999.999
+PDB_COORD_SPAN = PDB_MAX_COORD - PDB_MIN_COORD
+
+
+def _sanitize_atom_positions_for_pdb(
+    atom_positions: np.ndarray,
+    atom_mask: np.ndarray,
+) -> np.ndarray:
+    """Translate/clamp coordinates so fixed-width PDB fields never overflow.
+
+    PDB coordinates use 8 columns with 3 decimals, so values must lie in
+    [-999.999, 9999.999]. If valid atoms exceed that range, we first apply a
+    per-axis rigid translation that preserves geometry whenever possible.
+    Remaining outliers are clipped as a last-resort fallback.
+    """
+    positions = np.asarray(atom_positions, dtype=np.float64).copy()
+    valid_mask = np.asarray(atom_mask) > 0.5
+    if not np.any(valid_mask):
+        return positions
+
+    valid = positions[valid_mask]
+    if not np.isfinite(valid).all():
+        raise ValueError("Cannot write PDB: atom coordinates contain NaN/Inf values.")
+
+    mins = valid.min(axis=0)
+    maxs = valid.max(axis=0)
+    shifts = np.zeros(3, dtype=np.float64)
+
+    for axis in range(3):
+        low = float(mins[axis])
+        high = float(maxs[axis])
+        if low >= PDB_MIN_COORD and high <= PDB_MAX_COORD:
+            continue
+        if high - low <= PDB_COORD_SPAN:
+            # Any shift in [PDB_MIN-low, PDB_MAX-high] is valid.
+            shift_min = PDB_MIN_COORD - low
+            shift_max = PDB_MAX_COORD - high
+            shifts[axis] = 0.5 * (shift_min + shift_max)
+
+    if np.any(shifts != 0.0):
+        positions = positions + shifts
+        valid = positions[valid_mask]
+
+    if np.any(valid < PDB_MIN_COORD) or np.any(valid > PDB_MAX_COORD):
+        warnings.warn(
+            "Coordinates exceed PDB fixed-width limits after translation; clipping extreme values.",
+            stacklevel=2,
+        )
+        positions = np.clip(positions, PDB_MIN_COORD, PDB_MAX_COORD)
+
+    return positions
 
 
 def pdb_name_from_path(pdb_file_path: str) -> str:
@@ -221,7 +274,7 @@ def to_pdb(prot: Protein, model=1, add_end=True) -> str:
 
     atom_mask = prot.atom_mask
     aatype = prot.aatype
-    atom_positions = prot.atom_positions
+    atom_positions = _sanitize_atom_positions_for_pdb(prot.atom_positions, atom_mask)
     residue_index = prot.residue_index.astype(int) + 1  # to start from 1
     chain_index = prot.chain_index.astype(int)
     b_factors = prot.b_factors
@@ -279,6 +332,11 @@ def to_pdb(prot: Protein, model=1, add_end=True) -> str:
                 f"{occupancy:>6.2f}{b_factor:>6.2f}          "
                 f"{element:>2}{charge:>2}"
             )
+            if len(atom_line) > 80:
+                raise ValueError(
+                    "Failed to format PDB line within 80 columns. "
+                    "This usually indicates coordinate or index overflow."
+                )
             pdb_lines.append(atom_line)
             atom_index += 1
 
@@ -498,6 +556,12 @@ def write_prot_ligand_to_pdb(coors: torch.Tensor, residue_type: torch.Tensor, li
         pdb_path: str
     """
     atom37_mask = torch.sum(torch.abs(coors), axis=-1) > 1e-7
+    # Keep ligand/protein PDB output robust against fixed-width coordinate overflows.
+    sanitized = _sanitize_atom_positions_for_pdb(
+        coors.detach().cpu().numpy(),
+        atom37_mask.detach().cpu().numpy(),
+    )
+    coors = torch.as_tensor(sanitized, dtype=coors.dtype, device=coors.device)
     prot = atom_array_from_encoding(
         encoded_coord=coors,
         encoded_mask=atom37_mask,

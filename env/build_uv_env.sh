@@ -205,8 +205,10 @@ if [ "$FULL_INSTALL" = true ]; then
     uv pip install -e "$PROJECT_DIR/community_models/colabdesign"
 
     if [[ "$IS_APPLE_SILICON" == "true" ]]; then
-        echo "      -> JAX (CPU backend for Apple Silicon)..."
-        uv pip install jaxlib==0.4.29 jax==0.4.29
+        echo "      -> JAX + jax-metal (experimental Apple Silicon backend)..."
+        # Keep these pins in sync with docs/INFERENCE.md and pyproject metadata.
+        # jax-metal 0.1.0 is compatible with jax/jaxlib 0.4.26.
+        uv pip install jax==0.4.26 jaxlib==0.4.26 jax-metal==0.1.0
     else
         echo "      -> JAX with CUDA..."
         uv pip install jaxlib==0.4.29+cuda12.cudnn91 \

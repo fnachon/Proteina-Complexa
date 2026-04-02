@@ -77,6 +77,8 @@ proteina_clone_command = "git clone https://github.com/fnachon/Proteina-Complexa
 foundry_install_command = "conda run -n foundry pip install \"rc-foundry[all] @ git+https://github.com/fnachon/foundry.git\""
 foundry_models_command = "conda run -n foundry foundry install base-models"
 complexa_install_command = "conda run -n proteina pip install -e ."
+jax_metal_install_command = "conda run -n proteina pip install \"jax==0.4.26\" \"jaxlib==0.4.26\" \"jax-metal==0.1.0\""
+jax_metal_compat_env_var_example = "ENABLE_PJRT_COMPATIBILITY=1"
 complexa_init_command = "conda run -n proteina complexa init uv --force"
 complexa_download_command = "conda run -n proteina complexa download --complexa-all"
 openbabel_install_command = "conda install -n proteina -c conda-forge openbabel -y"

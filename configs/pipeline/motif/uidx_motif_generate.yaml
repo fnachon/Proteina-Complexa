@@ -86,6 +86,9 @@ refinement:
   algorithm: null
   refine_targets: final
   save_pre_refinement: none
+  # Experimental JAX Metal support on Apple Silicon.
+  # auto/metal retries refinement on CPU if Metal hits unsupported primitives.
+  jax_backend: auto  # Options: auto, metal, gpu, cpu
 
 # =============================================================================
 # Post-generation filtering (no reward model → no filtering)

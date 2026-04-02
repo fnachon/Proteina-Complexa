@@ -285,14 +285,16 @@ conda create -n proteina python=3.12 -y
 ./env/build_uv_env.sh
 source .venv/bin/activate
 conda run -n proteina pip install -e .
+conda run -n proteina pip install "jax==0.4.26" "jaxlib==0.4.26" "jax-metal==0.1.0"
 conda run -n proteina complexa init uv --force
 source env.sh
 conda run -n proteina complexa download --complexa-all
 conda install -n proteina -c conda-forge openbabel -y
 
-# 3) Point Complexa to RF3 installed in foundry
+# 3) Point Complexa to RF3 installed in foundry (+ jax-metal compatibility)
 export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
 export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
+export ENABLE_PJRT_COMPATIBILITY=1
 ```
 
 Optional checkpoint wiring for ProteinMPNN/LigandMPNN:
@@ -422,6 +424,10 @@ complexa design configs/search_binder_local_pipeline.yaml \
 
 # Change reward weights (ligand binder / AME -- RF3)
 ++generation.reward_model.reward_models.rf3folding.reward_weights.min_ipAE=-2.0
+
+# Experimental refinement backend on Apple Silicon (requires jax-metal)
+++generation.refinement.algorithm=sequence_hallucination
+++generation.refinement.jax_backend=metal
 
 # Change success thresholds for analysis
 ++aggregation.success_thresholds.i_pAE.threshold=5.0
@@ -658,6 +664,21 @@ export COMPLEXA_ACCELERATOR=mps
 ```
 
 If MPS is still unavailable, Complexa will fall back to CPU and print the exact PyTorch runtime reason in logs.
+
+### Experimental JAX Metal for Refinement
+
+`sequence_hallucination` refinement can be pinned to an experimental JAX Metal backend on Apple Silicon:
+
+```bash
+conda run -n proteina pip install "jax==0.4.26" "jaxlib==0.4.26" "jax-metal==0.1.0"
+export ENABLE_PJRT_COMPATIBILITY=1
+++generation.refinement.algorithm=sequence_hallucination \
+++generation.refinement.jax_backend=metal
+```
+
+Supported values are `auto` (default), `metal`, `gpu`, `cpu`.
+`auto` prefers CUDA GPU, then Metal, then CPU.
+If `metal` is requested but unavailable, refinement fails fast with an explicit error.
 
 ### SLURM Job Failures
 

@@ -11,12 +11,9 @@ import tempfile
 import time
 from typing import Any
 
-import jax
 import torch
-from colabdesign import mk_afdesign_model
 from loguru import logger
 
-from proteinfoundation.rewards.alphafold2_reward_utils import add_helix_binder_loss, add_i_ptm_loss, add_rg_loss
 from proteinfoundation.utils.pdb_utils import get_chain_ids_from_pdb, load_pdb, write_prot_to_pdb
 from proteinfoundation.utils.tensor_utils import concat_dict_tensors
 
@@ -31,6 +28,8 @@ _DEFAULT_LOSS_WEIGHTS: dict[str, float] = {
     "i_ptm": 0.05,
     "helix_binder": -0.3,
 }
+
+_JAX_BACKEND_CHOICES = {"auto", "cpu", "gpu", "metal"}
 
 
 class SequenceHallucination:
@@ -99,6 +98,164 @@ class SequenceHallucination:
     _BUILTIN_WEIGHT_KEYS = {"pae", "plddt", "i_pae", "con", "i_con", "dgram_cce"}
 
     @staticmethod
+    def _jax_devices(platform: str) -> list[Any]:
+        """Return available JAX devices for a platform, or [] if unavailable.
+
+        Some jax-metal stacks expose backend name as ``METAL`` (uppercase),
+        while config uses ``metal``. Probe both variants for robustness.
+        """
+        canonical = str(platform).strip()
+        candidates = [canonical]
+        if canonical.lower() == "metal":
+            candidates += ["METAL", "metal"]
+        elif canonical.upper() == "METAL":
+            candidates += ["metal"]
+
+        try:
+            import jax
+        except Exception as exc:
+            logger.debug(f"Failed to import JAX while probing platform '{platform}': {exc}")
+            return []
+
+        last_exc: Exception | None = None
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            try:
+                return list(jax.devices(candidate))
+            except Exception as exc:
+                last_exc = exc
+
+        # Fallback: inspect all discovered devices and filter by platform.
+        try:
+            all_devices = list(jax.devices())
+            target = canonical.lower()
+            filtered = [d for d in all_devices if str(getattr(d, "platform", "")).lower() == target]
+            if filtered:
+                return filtered
+            if target == "metal":
+                # Older/newer jax-metal combinations can expose "METAL".
+                metal_like = [d for d in all_devices if str(getattr(d, "platform", "")).upper() == "METAL"]
+                if metal_like:
+                    return metal_like
+        except Exception as exc:
+            last_exc = exc
+
+        if last_exc is not None:
+            logger.debug(f"JAX platform '{platform}' unavailable: {last_exc}")
+        return []
+
+    @staticmethod
+    def _is_metal_device(device: Any) -> bool:
+        """Heuristic check for Apple Metal-backed JAX devices."""
+        platform = str(getattr(device, "platform", "")).lower()
+        if platform == "metal":
+            return True
+        text = str(device).lower()
+        return "metal" in text
+
+    @staticmethod
+    def _is_metal_unsupported_primitive_error(exc: Exception) -> bool:
+        """Detect known JAX Metal primitive gaps (e.g. eigh)."""
+        msg = str(exc).lower()
+        return "primitive 'eigh'" in msg and "platform metal" in msg
+
+    @classmethod
+    def _select_jax_device(cls, requested_backend: str) -> tuple[Any, str]:
+        """Resolve JAX backend preference to a concrete JAX device.
+
+        Supported values:
+          - auto: prefer CUDA GPU, then Metal, then CPU
+          - gpu: require JAX GPU
+          - metal: require JAX Metal (experimental)
+          - cpu: force CPU
+        """
+        backend = str(requested_backend).lower().strip()
+        if backend not in _JAX_BACKEND_CHOICES:
+            logger.warning(
+                f"Unknown refinement.jax_backend='{requested_backend}', "
+                "falling back to 'auto'."
+            )
+            backend = "auto"
+
+        has_cuda = torch.cuda.is_available()
+        mps_backend = getattr(torch.backends, "mps", None)
+        has_mps = bool(mps_backend and mps_backend.is_available())
+
+        if backend == "cpu":
+            # Force CPU platform to avoid accidental jax-metal plugin init on hosts
+            # where Metal is installed but unavailable.
+            os.environ["JAX_PLATFORMS"] = "cpu"
+            cpu_devices = cls._jax_devices("cpu")
+            if not cpu_devices:
+                raise RuntimeError("refinement.jax_backend=cpu requested but no JAX CPU device is available.")
+            return cpu_devices[0], "cpu"
+
+        if backend == "gpu":
+            os.environ["JAX_PLATFORMS"] = "gpu,cpu"
+            gpu_devices = cls._jax_devices("gpu")
+            if not gpu_devices:
+                raise RuntimeError("refinement.jax_backend=gpu requested but no JAX GPU device is available.")
+            device_id = torch.cuda.current_device() if has_cuda else 0
+            return gpu_devices[min(device_id, len(gpu_devices) - 1)], "gpu"
+
+        if backend == "metal":
+            if not has_mps:
+                raise RuntimeError(
+                    "refinement.jax_backend=metal requested but torch MPS is unavailable. "
+                    "Check torch.backends.mps.is_available() or use refinement.jax_backend=cpu."
+                )
+            os.environ.setdefault("ENABLE_PJRT_COMPATIBILITY", "1")
+            # Do not force lowercase "metal" in JAX_PLATFORMS: some jax-metal
+            # versions expose the backend token as uppercase "METAL".
+            os.environ.pop("JAX_PLATFORMS", None)
+            metal_devices = cls._jax_devices("metal")
+            if metal_devices:
+                return metal_devices[0], "metal"
+
+            gpu_devices = cls._jax_devices("gpu")
+            metal_like_gpu = [d for d in gpu_devices if cls._is_metal_device(d)]
+            if metal_like_gpu:
+                return metal_like_gpu[0], "metal-via-gpu"
+
+            raise RuntimeError(
+                "refinement.jax_backend=metal requested but no JAX Metal device was found. "
+                "Install/configure jax-metal, or use refinement.jax_backend=auto/cpu."
+            )
+
+        # backend == "auto"
+        if has_cuda:
+            os.environ["JAX_PLATFORMS"] = "gpu,cpu"
+            gpu_devices = cls._jax_devices("gpu")
+            if gpu_devices:
+                device_id = torch.cuda.current_device()
+                return gpu_devices[min(device_id, len(gpu_devices) - 1)], "gpu"
+            logger.warning("CUDA is available to PyTorch, but JAX has no GPU device. Trying Metal/CPU backends.")
+
+        if has_mps:
+            os.environ.setdefault("ENABLE_PJRT_COMPATIBILITY", "1")
+            # Avoid stale/invalid platform constraints (e.g. "metal,cpu" on
+            # stacks where backend token is uppercase "METAL").
+            os.environ.pop("JAX_PLATFORMS", None)
+            metal_devices = cls._jax_devices("metal")
+            if metal_devices:
+                return metal_devices[0], "metal"
+            gpu_devices = cls._jax_devices("gpu")
+            metal_like_gpu = [d for d in gpu_devices if cls._is_metal_device(d)]
+            if metal_like_gpu:
+                return metal_like_gpu[0], "metal-via-gpu"
+            logger.warning("Torch MPS is available, but JAX Metal backend is unavailable. Falling back to CPU.")
+
+        os.environ["JAX_PLATFORMS"] = "cpu"
+        cpu_devices = cls._jax_devices("cpu")
+        if cpu_devices:
+            return cpu_devices[0], "cpu"
+
+        raise RuntimeError("No JAX device is available for sequence_hallucination refinement.")
+
+    @staticmethod
     def _set_builtin_weights(af_model: Any, loss_weights: dict[str, float]) -> None:
         """(Re-)set opt["weights"] for ColabDesign's built-in loss terms.
 
@@ -121,6 +278,12 @@ class SequenceHallucination:
         registered exactly once -- calling this again would duplicate
         every callback and corrupt the loss.
         """
+        from proteinfoundation.rewards.alphafold2_reward_utils import (
+            add_helix_binder_loss,
+            add_i_ptm_loss,
+            add_rg_loss,
+        )
+
         add_rg_loss(af_model, loss_weights.get("rg", 0.0))
         add_i_ptm_loss(af_model, loss_weights.get("i_ptm", 0.0))
         add_helix_binder_loss(af_model, loss_weights.get("helix_binder", 0.0))
@@ -149,23 +312,15 @@ class SequenceHallucination:
             replaced by the refined versions for samples that succeeded.
             Samples that failed refinement retain their original values.
         """
-        bs = sample_prots["coors"].shape[0]
-        if torch.cuda.is_available():
-            device_id = torch.cuda.current_device()
-            try:
-                gpu_devices = jax.devices("gpu")
-            except Exception:
-                gpu_devices = []
-            if gpu_devices:
-                jax_device = gpu_devices[min(device_id, len(gpu_devices) - 1)]
-            else:
-                jax_device = jax.devices("cpu")[0]
-                logger.warning("CUDA detected by PyTorch but unavailable to JAX; using JAX CPU backend.")
-        else:
-            jax_device = jax.devices("cpu")[0]
-            logger.warning("CUDA not available for sequence hallucination; using JAX CPU backend.")
-
         ref_cfg = self.inf_cfg.refinement
+        requested_jax_backend = ref_cfg.get("jax_backend", "auto")
+        jax_device, resolved_jax_backend = self._select_jax_device(requested_jax_backend)
+        logger.info(
+            "Sequence hallucination JAX backend "
+            f"(requested={requested_jax_backend}, resolved={resolved_jax_backend}, device={jax_device})"
+        )
+
+        bs = sample_prots["coors"].shape[0]
         n_hard_iters = ref_cfg.get("n_hard_iters", 5)
         n_temp_iters = ref_cfg.get("n_temp_iters", 45)
         n_greedy_iters = ref_cfg.get("n_greedy_iters", 15)
@@ -191,6 +346,8 @@ class SequenceHallucination:
         temp_dir = tempfile.mkdtemp()
         try:
             target_chain, binder_chain = None, None
+            # Import after backend selection so JAX env vars are already set.
+            from colabdesign import mk_afdesign_model
 
             # BUG FIX (performance): the original created a new
             # mk_afdesign_model per sample which is correct but very
@@ -211,6 +368,8 @@ class SequenceHallucination:
 
             refined_sample_prots: list[dict[str, torch.Tensor]] = []
             callbacks_registered = False
+            cpu_fallback_model = None
+            cpu_callbacks_registered = False
 
             for i in range(bs):
                 t0 = time.time()
@@ -243,75 +402,114 @@ class SequenceHallucination:
                     hotspot_mask_i = target_hotspot_mask[i] if target_hotspot_mask is not None else None
                     hotspot_list = self._parse_hotspots(hotspot_mask_i, chain_index, res_mask)
 
-                    af_model.prep_inputs(
-                        pdb_filename=temp_pdb_path,
-                        target_chain=target_chain,
-                        binder_chain=binder_chain,
-                        mode="wildtype",
-                        rm_target=False,
-                        rm_target_seq=False,
-                        rm_target_sc=False,
-                        hotspot=hotspot_list,
-                        use_binder_template=True,
-                        rm_template_ic=True,
-                    )
-
-                    # BUG FIX (callback accumulation): callbacks persist
-                    # across prep_inputs -- register them only on the
-                    # first sample.  Built-in weights are reset by
-                    # restart(), so re-apply every iteration.
-                    if not callbacks_registered:
-                        self._register_loss_callbacks(af_model, loss_weights)
-                        callbacks_registered = True
-                    self._set_builtin_weights(af_model, loss_weights)
-
-                    # ---- Optimisation stages (unchanged from original) ----
-                    if enable_soft:
-                        logger.info(f"Sample {i + 1}/{bs} - Stage 2: Softmax optimisation")
-                        af_model.design_soft(
-                            n_temp_iters,
-                            e_temp=1e-2,
-                            models=[0],
-                            num_models=1,
-                            sample_models=False,
-                            ramp_recycles=False,
+                    def _run_with_model(model, callbacks_flag, backend_tag: str):
+                        model.prep_inputs(
+                            pdb_filename=temp_pdb_path,
+                            target_chain=target_chain,
+                            binder_chain=binder_chain,
+                            mode="wildtype",
+                            rm_target=False,
+                            rm_target_seq=False,
+                            rm_target_sc=False,
+                            hotspot=hotspot_list,
+                            use_binder_template=True,
+                            rm_template_ic=True,
                         )
 
-                        logger.info(f"Sample {i + 1}/{bs} - Stage 3: One-hot optimisation")
-                        af_model.design_hard(
-                            n_hard_iters,
-                            temp=1e-2,
-                            models=[0],
-                            num_models=1,
-                            sample_models=False,
-                            dropout=False,
-                            ramp_recycles=False,
+                        if not callbacks_flag:
+                            self._register_loss_callbacks(model, loss_weights)
+                            callbacks_flag = True
+                        self._set_builtin_weights(model, loss_weights)
+
+                        if enable_soft:
+                            logger.info(f"Sample {i + 1}/{bs} - Stage 2: Softmax optimisation ({backend_tag})")
+                            model.design_soft(
+                                n_temp_iters,
+                                e_temp=1e-2,
+                                models=[0],
+                                num_models=1,
+                                sample_models=False,
+                                ramp_recycles=False,
+                            )
+
+                            logger.info(f"Sample {i + 1}/{bs} - Stage 3: One-hot optimisation ({backend_tag})")
+                            model.design_hard(
+                                n_hard_iters,
+                                temp=1e-2,
+                                models=[0],
+                                num_models=1,
+                                sample_models=False,
+                                dropout=False,
+                                ramp_recycles=False,
+                            )
+
+                        if enable_greedy:
+                            logger.info(f"Sample {i + 1}/{bs} - Stage 4: PSSM semigreedy optimisation ({backend_tag})")
+                            greedy_tries = math.ceil(n * (greedy_percentage / 100))
+                            model.design_pssm_semigreedy(
+                                soft_iters=0,
+                                hard_iters=n_greedy_iters,
+                                tries=greedy_tries,
+                                models=[0],
+                                num_models=1,
+                                sample_models=False,
+                                ramp_models=False,
+                                save_best=True,
+                            )
+
+                        if enable_soft or enable_greedy:
+                            save_pdb_filename = temp_pdb_path.replace(".pdb", "_refolded.pdb")
+                            model.save_pdb(save_pdb_filename)
+                        else:
+                            save_pdb_filename = temp_pdb_path
+
+                        stage_4_sample = load_pdb(save_pdb_filename)
+                        refined_coors_local = torch.as_tensor(stage_4_sample.atom_positions, dtype=torch.float32).to(
+                            coors.device
+                        )
+                        refined_residue_type_local = torch.as_tensor(stage_4_sample.aatype, dtype=torch.long).to(
+                            coors.device
+                        )
+                        return refined_coors_local, refined_residue_type_local, callbacks_flag
+
+                    try:
+                        refined_coors, refined_residue_type, callbacks_registered = _run_with_model(
+                            af_model,
+                            callbacks_registered,
+                            resolved_jax_backend,
+                        )
+                    except Exception as stage_exc:
+                        should_retry_on_cpu = (
+                            resolved_jax_backend.startswith("metal")
+                            and self._is_metal_unsupported_primitive_error(stage_exc)
+                        )
+                        if not should_retry_on_cpu:
+                            raise
+
+                        logger.warning(
+                            "Metal refinement hit unsupported JAX primitive; "
+                            f"retrying sample {i + 1}/{bs} on CPU. Original error: {stage_exc}"
                         )
 
-                    if enable_greedy:
-                        logger.info(f"Sample {i + 1}/{bs} - Stage 4: PSSM semigreedy optimisation")
-                        greedy_tries = math.ceil(n * (greedy_percentage / 100))
-                        af_model.design_pssm_semigreedy(
-                            soft_iters=0,
-                            hard_iters=n_greedy_iters,
-                            tries=greedy_tries,
-                            models=[0],
-                            num_models=1,
-                            sample_models=False,
-                            ramp_models=False,
-                            save_best=True,
+                        if cpu_fallback_model is None:
+                            cpu_device, _ = self._select_jax_device("cpu")
+                            cpu_fallback_model = mk_afdesign_model(
+                                protocol="binder",
+                                debug=False,
+                                data_dir=os.environ.get("AF2_DIR"),
+                                use_multimer=True,
+                                num_recycles=n_recycles,
+                                use_initial_guess=False,
+                                use_initial_atom_pos=False,
+                                best_metric="loss",
+                                device=cpu_device,
+                            )
+
+                        refined_coors, refined_residue_type, cpu_callbacks_registered = _run_with_model(
+                            cpu_fallback_model,
+                            cpu_callbacks_registered,
+                            "cpu-fallback",
                         )
-
-                    # ---- Load refined structure ----
-                    if enable_soft or enable_greedy:
-                        save_pdb_filename = temp_pdb_path.replace(".pdb", "_refolded.pdb")
-                        af_model.save_pdb(save_pdb_filename)
-                    else:
-                        save_pdb_filename = temp_pdb_path
-
-                    stage_4_sample = load_pdb(save_pdb_filename)
-                    refined_coors = torch.as_tensor(stage_4_sample.atom_positions).to(coors.device).float()
-                    refined_residue_type = torch.as_tensor(stage_4_sample.aatype).to(coors.device).long()
 
                     # BUG FIX: validate that ColabDesign returned the
                     # expected number of residues before writing into

@@ -98,6 +98,11 @@ refinement:
   n_recycles: 3
   n_greedy_iters: 15
   greedy_percentage: 1
+  # JAX backend for ColabDesign refinement:
+  # auto (default) prefers CUDA GPU, then Metal (experimental), then CPU.
+  # On Apple Silicon, auto/metal uses JAX Metal and transparently retries the
+  # sample on CPU if a Metal-unsupported primitive (e.g. eigh) is hit.
+  jax_backend: auto  # Options: auto, metal, gpu, cpu
 
   # ColabDesign AF2 loss weights used during refinement optimisation.
   # Set any weight to 0.0 to disable that loss term.
