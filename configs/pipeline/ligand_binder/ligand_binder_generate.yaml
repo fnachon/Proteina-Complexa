@@ -159,6 +159,6 @@ refinement:
   n_recycles: 3
   n_greedy_iters: 15
   greedy_percentage: 1
-  # Experimental JAX Metal support on Apple Silicon.
-  # auto/metal retries refinement on CPU if Metal hits unsupported primitives.
-  jax_backend: auto  # Options: auto, metal, gpu, cpu
+  # Experimental Apple JAX backend support on Apple Silicon (mps preferred).
+  # auto/mps retries refinement on CPU if Apple backend hits unsupported primitives.
+  jax_backend: auto  # Options: auto, mps, metal (legacy alias), gpu, cpu

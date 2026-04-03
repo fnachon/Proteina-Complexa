@@ -101,10 +101,12 @@ source .venv/bin/activate
 For Apple Silicon / MPS runs, install Proteina-Complexa from the MPS-enabled fork:
 <https://github.com/fnachon/Proteina-Complexa>
 
+Use this fork URL as the default clone source because it contains the latest fixes and patches.
+
 For first-time setup on macOS, use two separate conda environments:
 
 - `foundry` -- install Foundry (RF3 + ProteinMPNN/LigandMPNN + AtomWorks)
-- `proteina` -- install and run Proteina-Complexa
+- `proteina-complexa` -- install and run Proteina-Complexa
 
 This separation avoids dependency conflicts and is the recommended setup for Apple Silicon.
 Canonical values for this macOS setup are mirrored in `pyproject.toml` under
@@ -116,23 +118,25 @@ From-scratch setup:
 git clone https://github.com/fnachon/Proteina-Complexa
 cd Proteina-Complexa
 
-# 1) Foundry environment (separate from proteina)
+# 1) Foundry environment (separate from proteina-complexa)
 conda create -n foundry python=3.12 -y
 conda run -n foundry pip install torch
 conda run -n foundry pip install "rc-foundry[all] @ git+https://github.com/fnachon/foundry.git"
 conda run -n foundry foundry install base-models
 
 # 2) Proteina-Complexa runtime environment
-conda create -n proteina python=3.12 -y
-./env/build_uv_env.sh
+conda create -n proteina-complexa python=3.13 -y
+./env/build_uv_env.sh --python 3.13
 source .venv/bin/activate
-conda run -n proteina pip install -e .
-conda run -n proteina complexa init uv --force
+conda run -n proteina-complexa pip install -e .
+conda run -n proteina-complexa pip install jax-mps
+conda run -n proteina-complexa complexa init uv --force
 source env.sh
-conda run -n proteina complexa download --complexa-all
+conda run -n proteina-complexa complexa download --complexa-all
 
 # 3) Optional but recommended for ligand workflows
-conda install -n proteina -c conda-forge openbabel -y
+conda install -n proteina-complexa -c conda-forge openbabel -y
+conda install -n proteina-complexa -c conda-forge rdkit -y
 ```
 
 Wire Foundry assets into Complexa (RF3 + MPNN checkpoints):
@@ -176,10 +180,10 @@ complexa init uv --force
 source env.sh
 ```
 
-- Install Complexa in your dedicated runtime env (for example `proteina`):
+- Install Complexa in your dedicated runtime env (for example `proteina-complexa`):
 
 ```bash
-conda run -n proteina pip install -e .
+conda run -n proteina-complexa pip install -e .
 ```
 
 These presets are designed for out-of-the-box local runs on Apple Silicon:
@@ -200,23 +204,23 @@ complexa design configs/search_binder_local_pipeline_mps.yaml \
 
 Optional: enable RF3-backed binder refolding on macOS
 
-Run Complexa from your dedicated `proteina` env. If RF3 is installed in a separate `foundry` env (recommended; e.g. from `https://github.com/fnachon/foundry`), point `RF3_EXEC_PATH` to that executable:
+Run Complexa from your dedicated `proteina-complexa` env. If RF3 is installed in a separate `foundry` env (recommended; e.g. from `https://github.com/fnachon/foundry`), point `RF3_EXEC_PATH` to that executable:
 
 ```bash
 # Resolve RF3 executable from the foundry env
 export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
 export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
 
-# Run full pipeline from proteina env with RF3-enabled MPS preset
-conda run -n proteina complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
+# Run full pipeline from proteina-complexa env with RF3-enabled MPS preset
+conda run -n proteina-complexa complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
     ++run_name=pdl1_mps_rf3 \
     ++generation.task_name=02_PDL1
 ```
 
-> **Known Issue: tmol install fails on Python 3.12 for some users**
+> **Legacy Python 3.12 note**
 >
 > tmol depends on `sparse` -> `numba` -> `llvmlite`, and the pinned versions of `llvmlite` are
-> incompatible with Python 3.12. If the install fails during the tmol step, add the following
+> sometimes incompatible with Python 3.12. If you intentionally use Python 3.12 and install fails during the tmol step, add the following
 > workaround to `build_uv_env.sh` before the tmol install line:
 >
 > ```bash

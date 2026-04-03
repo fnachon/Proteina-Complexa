@@ -31,7 +31,7 @@ _DEFAULT_LOSS_WEIGHTS: dict[str, float] = {
     "helix_binder": -0.3,
 }
 
-_JAX_BACKEND_CHOICES = {"auto", "cpu", "gpu", "metal"}
+_JAX_BACKEND_CHOICES = {"auto", "cpu", "gpu", "mps", "metal"}
 
 
 class SequenceHallucination:
@@ -103,15 +103,19 @@ class SequenceHallucination:
     def _jax_devices(platform: str) -> list[Any]:
         """Return available JAX devices for a platform, or [] if unavailable.
 
-        Some jax-metal stacks expose backend name as ``METAL`` (uppercase),
-        while config uses ``metal``. Probe both variants for robustness.
+        Different Apple PJRT plugins expose backend names as ``mps`` or
+        ``metal`` (sometimes uppercase). Probe variants for robustness.
         """
         canonical = str(platform).strip()
         candidates = [canonical]
         if canonical.lower() == "metal":
             candidates += ["METAL", "metal"]
+        elif canonical.lower() == "mps":
+            candidates += ["MPS", "mps"]
         elif canonical.upper() == "METAL":
             candidates += ["metal"]
+        elif canonical.upper() == "MPS":
+            candidates += ["mps"]
 
         try:
             import jax
@@ -137,11 +141,15 @@ class SequenceHallucination:
             filtered = [d for d in all_devices if str(getattr(d, "platform", "")).lower() == target]
             if filtered:
                 return filtered
-            if target == "metal":
-                # Older/newer jax-metal combinations can expose "METAL".
-                metal_like = [d for d in all_devices if str(getattr(d, "platform", "")).upper() == "METAL"]
-                if metal_like:
-                    return metal_like
+            if target in {"metal", "mps"}:
+                apple_like = [
+                    d
+                    for d in all_devices
+                    if str(getattr(d, "platform", "")).lower() in {"metal", "mps"}
+                    or str(getattr(d, "platform", "")).upper() in {"METAL", "MPS"}
+                ]
+                if apple_like:
+                    return apple_like
         except Exception as exc:
             last_exc = exc
 
@@ -150,28 +158,34 @@ class SequenceHallucination:
         return []
 
     @staticmethod
-    def _is_metal_device(device: Any) -> bool:
-        """Heuristic check for Apple Metal-backed JAX devices."""
+    def _is_apple_jax_device(device: Any) -> bool:
+        """Heuristic check for Apple Metal/MPS-backed JAX devices."""
         platform = str(getattr(device, "platform", "")).lower()
-        if platform == "metal":
+        if platform in {"metal", "mps"}:
             return True
         text = str(device).lower()
-        return "metal" in text
+        return "metal" in text or "mps" in text
 
     @staticmethod
-    def _is_metal_unsupported_primitive_error(exc: Exception) -> bool:
-        """Detect known JAX Metal primitive gaps (e.g. eigh)."""
+    def _is_apple_unsupported_primitive_error(exc: Exception) -> bool:
+        """Detect known Apple backend primitive gaps (e.g. eigh)."""
         msg = str(exc).lower()
-        return "primitive 'eigh'" in msg and "platform metal" in msg
+        return "primitive 'eigh'" in msg and ("platform metal" in msg or "platform mps" in msg)
+
+    @staticmethod
+    def _is_apple_backend_tag(tag: str) -> bool:
+        lower = str(tag).lower()
+        return lower.startswith("mps") or lower.startswith("metal")
 
     @classmethod
     def _select_jax_device(cls, requested_backend: str) -> tuple[Any, str]:
         """Resolve JAX backend preference to a concrete JAX device.
 
         Supported values:
-          - auto: prefer CUDA GPU, then Metal, then CPU
+          - auto: prefer CUDA GPU, then Apple JAX backend (mps/metal), then CPU
           - gpu: require JAX GPU
-          - metal: require JAX Metal (experimental)
+          - mps: require Apple JAX backend (prefers jax-mps, then jax-metal)
+          - metal: legacy alias for mps
           - cpu: force CPU
         """
         backend = str(requested_backend).lower().strip()
@@ -187,8 +201,7 @@ class SequenceHallucination:
         has_mps = bool(mps_backend and mps_backend.is_available())
 
         if backend == "cpu":
-            # Force CPU platform to avoid accidental jax-metal plugin init on hosts
-            # where Metal is installed but unavailable.
+            # Force CPU platform to avoid accidental Apple PJRT plugin init.
             os.environ["JAX_PLATFORMS"] = "cpu"
             cpu_devices = cls._jax_devices("cpu")
             if not cpu_devices:
@@ -204,27 +217,37 @@ class SequenceHallucination:
             return gpu_devices[min(device_id, len(gpu_devices) - 1)], "gpu"
 
         if backend == "metal":
+            logger.warning("refinement.jax_backend=metal is deprecated; use refinement.jax_backend=mps.")
+            backend = "mps"
+
+        if backend == "mps":
             if not has_mps:
                 raise RuntimeError(
-                    "refinement.jax_backend=metal requested but torch MPS is unavailable. "
+                    "refinement.jax_backend=mps requested but torch MPS is unavailable. "
                     "Check torch.backends.mps.is_available() or use refinement.jax_backend=cpu."
                 )
+            # Do not force JAX_PLATFORMS=mps before importing JAX: if the host only
+            # has legacy jax-metal (platform METAL), JAX import would fail and block
+            # fallback probing.
+            os.environ.pop("JAX_PLATFORMS", None)
+            mps_devices = cls._jax_devices("mps")
+            if mps_devices:
+                return mps_devices[0], "mps"
+
             os.environ.setdefault("ENABLE_PJRT_COMPATIBILITY", "1")
-            # Do not force lowercase "metal" in JAX_PLATFORMS: some jax-metal
-            # versions expose the backend token as uppercase "METAL".
             os.environ.pop("JAX_PLATFORMS", None)
             metal_devices = cls._jax_devices("metal")
             if metal_devices:
-                return metal_devices[0], "metal"
+                return metal_devices[0], "metal-legacy"
 
             gpu_devices = cls._jax_devices("gpu")
-            metal_like_gpu = [d for d in gpu_devices if cls._is_metal_device(d)]
-            if metal_like_gpu:
-                return metal_like_gpu[0], "metal-via-gpu"
+            apple_like_gpu = [d for d in gpu_devices if cls._is_apple_jax_device(d)]
+            if apple_like_gpu:
+                return apple_like_gpu[0], "mps-via-gpu"
 
             raise RuntimeError(
-                "refinement.jax_backend=metal requested but no JAX Metal device was found. "
-                "Install/configure jax-metal, or use refinement.jax_backend=auto/cpu."
+                "refinement.jax_backend=mps requested but no Apple JAX backend was found. "
+                "Install/configure jax-mps (or jax-metal legacy), or use refinement.jax_backend=auto/cpu."
             )
 
         # backend == "auto"
@@ -234,21 +257,23 @@ class SequenceHallucination:
             if gpu_devices:
                 device_id = torch.cuda.current_device()
                 return gpu_devices[min(device_id, len(gpu_devices) - 1)], "gpu"
-            logger.warning("CUDA is available to PyTorch, but JAX has no GPU device. Trying Metal/CPU backends.")
+            logger.warning("CUDA is available to PyTorch, but JAX has no GPU device. Trying Apple/CPU backends.")
 
         if has_mps:
+            os.environ.pop("JAX_PLATFORMS", None)
+            mps_devices = cls._jax_devices("mps")
+            if mps_devices:
+                return mps_devices[0], "mps"
             os.environ.setdefault("ENABLE_PJRT_COMPATIBILITY", "1")
-            # Avoid stale/invalid platform constraints (e.g. "metal,cpu" on
-            # stacks where backend token is uppercase "METAL").
             os.environ.pop("JAX_PLATFORMS", None)
             metal_devices = cls._jax_devices("metal")
             if metal_devices:
-                return metal_devices[0], "metal"
+                return metal_devices[0], "metal-legacy"
             gpu_devices = cls._jax_devices("gpu")
-            metal_like_gpu = [d for d in gpu_devices if cls._is_metal_device(d)]
-            if metal_like_gpu:
-                return metal_like_gpu[0], "metal-via-gpu"
-            logger.warning("Torch MPS is available, but JAX Metal backend is unavailable. Falling back to CPU.")
+            apple_like_gpu = [d for d in gpu_devices if cls._is_apple_jax_device(d)]
+            if apple_like_gpu:
+                return apple_like_gpu[0], "mps-via-gpu"
+            logger.warning("Torch MPS is available, but no Apple JAX backend is available. Falling back to CPU.")
 
         os.environ["JAX_PLATFORMS"] = "cpu"
         cpu_devices = cls._jax_devices("cpu")
@@ -536,14 +561,14 @@ class SequenceHallucination:
                         )
                     except Exception as stage_exc:
                         should_retry_on_cpu = (
-                            resolved_jax_backend.startswith("metal")
-                            and self._is_metal_unsupported_primitive_error(stage_exc)
+                            self._is_apple_backend_tag(resolved_jax_backend)
+                            and self._is_apple_unsupported_primitive_error(stage_exc)
                         )
                         if not should_retry_on_cpu:
                             raise
 
                         logger.warning(
-                            "Metal refinement hit unsupported JAX primitive; "
+                            "Apple JAX refinement hit unsupported primitive; "
                             f"retrying sample {i + 1}/{bs} on CPU. Original error: {stage_exc}"
                         )
 

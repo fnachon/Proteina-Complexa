@@ -12,16 +12,16 @@ set -e
 # Options:
 #   --clean         Remove existing .venv and UV cache before building (fresh start)
 #   --minimal       Skip optional dependencies (JAX, ColabFold, tmol)
-#   --python VER    Python version: 3.11, 3.12, or 3.13 (default: 3.12)
+#   --python VER    Python version: 3.11, 3.12, or 3.13 (default: 3.13)
 #   --name NAME     Custom prompt name shown when venv is activated (default: complexa)
 #   --root PATH     Specify installation root directory (where .venv will be created)
 #   -h, --help      Show this help message
 #
 # Examples:
-#   ./build_public_uv_env.sh                      # Full install (Python 3.12)
+#   ./build_public_uv_env.sh                      # Full install (Python 3.13)
 #   ./build_public_uv_env.sh --minimal            # Base dependencies only
+#   ./build_public_uv_env.sh --python 3.12        # Legacy Python 3.12 path
 #   ./build_public_uv_env.sh --python 3.11        # Full install with Python 3.11
-#   ./build_public_uv_env.sh --python 3.13        # Experimental Python 3.13 path
 #   ./build_public_uv_env.sh --name myenv         # Custom prompt: (myenv)
 #   ./build_public_uv_env.sh --root /path/to/dir  # Create .venv in custom directory
 # ==============================================================================
@@ -31,7 +31,7 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALL_ROOT=""
 FULL_INSTALL=true
 CLEAN=false
-PYTHON_VERSION="3.12"
+PYTHON_VERSION="3.13"
 VENV_NAME="complexa"
 
 while [[ $# -gt 0 ]]; do
@@ -66,16 +66,16 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --clean         Remove existing .venv and UV cache before building"
             echo "  --minimal       Skip optional dependencies (JAX, ColabFold, tmol)"
-            echo "  --python VER    Python version: 3.11, 3.12, or 3.13 (default: 3.12)"
+            echo "  --python VER    Python version: 3.11, 3.12, or 3.13 (default: 3.13)"
             echo "  --name NAME     Custom prompt name (default: complexa)"
             echo "  --root PATH     Specify where to create .venv (default: project dir)"
             echo "  -h, --help      Show this help message"
             echo ""
             echo "Examples:"
-            echo "  ./build_public_uv_env.sh                # Full install (Python 3.12)"
+            echo "  ./build_public_uv_env.sh                # Full install (Python 3.13)"
             echo "  ./build_public_uv_env.sh --minimal      # Base dependencies only"
+            echo "  ./build_public_uv_env.sh --python 3.12  # Legacy Python 3.12 path"
             echo "  ./build_public_uv_env.sh --python 3.11  # Full install with Python 3.11"
-            echo "  ./build_public_uv_env.sh --python 3.13  # Experimental Python 3.13 path"
             exit 0
             ;;
         -*)
@@ -123,8 +123,8 @@ echo "Install directory: $VENV_DIR"
 echo "Python version: $PYTHON_VERSION"
 echo "Prompt name: $VENV_NAME"
 echo "Full install: $FULL_INSTALL"
-if [[ "$PYTHON_VERSION" == "3.13" ]]; then
-    echo "WARNING: Python 3.13 path is experimental (dependency pins differ from 3.12)."
+if [[ "$PYTHON_VERSION" == "3.12" ]]; then
+    echo "Note: Python 3.12 is a legacy path. Python 3.13 is the default runtime target."
 fi
 echo ""
 
@@ -188,14 +188,21 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# 6. Install Graphein and Atomworks
+# 6. Install Graphein, Atomworks, and RDKit
 # ------------------------------------------------------------------------------
-echo "[6/8] Installing Graphein and Atomworks..."
+echo "[6/8] Installing Graphein, Atomworks, and RDKit..."
 echo "      -> Graphein..."
 uv pip install graphein==1.7.7 --no-deps
 
 echo "      -> Atomworks..."
 uv pip install "atomworks[ml,openbabel,dev]" || echo "Warning: atomworks install failed"
+
+echo "      -> RDKit (required for ligand workflows)..."
+if ! python -c "import rdkit" >/dev/null 2>&1; then
+    uv pip install rdkit || echo "Warning: rdkit install failed (try: conda install -c conda-forge rdkit in your runtime env)"
+else
+    echo "         RDKit already available"
+fi
 
 # ------------------------------------------------------------------------------
 # 7. Install optional/full dependencies
@@ -211,10 +218,12 @@ if [ "$FULL_INSTALL" = true ]; then
             chex==0.1.86 \
             dm-haiku==0.0.12 \
             optax==0.2.2 \
-            flax==0.9.0 \
-            jax==0.4.38 \
-            jaxlib==0.4.38 \
-            jax-metal==0.1.0
+            flax==0.9.0
+        echo "      -> JAX + jax-mps (experimental Apple Silicon backend)..."
+        if ! uv pip install jax-mps; then
+            echo "Warning: jax-mps install failed; falling back to jax-metal compatibility pins."
+            uv pip install jax==0.4.38 jaxlib==0.4.38 jax-metal==0.1.0
+        fi
     else
         echo "      -> ColabDesign & AlphaFold-ColabFold..."
         uv pip install colabdesign==1.1.1 alphafold-colabfold==2.3.7
@@ -225,7 +234,7 @@ if [ "$FULL_INSTALL" = true ]; then
 
     if [[ "$IS_APPLE_SILICON" == "true" ]]; then
         if [[ "$PYTHON_VERSION" == "3.13" ]]; then
-            echo "      -> JAX + jax-metal already installed above with Python 3.13 pins."
+            echo "      -> Apple JAX backend already installed above (jax-mps preferred; jax-metal fallback)."
         else
             echo "      -> JAX + jax-metal (experimental Apple Silicon backend)..."
             # Keep these pins in sync with docs/INFERENCE.md and pyproject metadata.

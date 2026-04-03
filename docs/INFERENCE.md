@@ -262,14 +262,15 @@ complexa design configs/search_ame_local_pipeline_mps_rf3.yaml \
 For new users on Apple Silicon, use two separate conda environments:
 
 - `foundry` for RF3, ProteinMPNN/LigandMPNN, and AtomWorks.
-- `proteina` for running `complexa`.
+- `proteina-complexa` for running `complexa`.
 
 Recommended split:
-- Stable path: keep both envs on Python 3.12.
-- Experimental path: use Python 3.13 only for the `proteina` runtime env, keep `foundry` on Python 3.12.
+- Keep `foundry` on Python 3.12.
+- Use Python 3.13 for the `proteina-complexa` runtime env (default path).
 
 Install Foundry from the Apple Silicon fork: <https://github.com/fnachon/foundry>
 Install Proteina-Complexa from the MPS-enabled fork: <https://github.com/fnachon/Proteina-Complexa>
+Use that Proteina-Complexa fork URL as the default clone source (it contains the required fixes and patches).
 Canonical values for this setup are mirrored in `pyproject.toml` under
 `[tool.proteina.installation.macos]`.
 
@@ -284,32 +285,35 @@ conda run -n foundry pip install torch
 conda run -n foundry pip install "rc-foundry[all] @ git+https://github.com/fnachon/foundry.git"
 conda run -n foundry foundry install base-models
 
-# 2) Proteina-Complexa runtime env
-conda create -n proteina python=3.12 -y
-./env/build_uv_env.sh
-source .venv/bin/activate
-conda run -n proteina pip install -e .
-conda run -n proteina pip install "jax==0.4.26" "jaxlib==0.4.26" "jax-metal==0.1.0"
-conda run -n proteina complexa init uv --force
-source env.sh
-conda run -n proteina complexa download --complexa-all
-conda install -n proteina -c conda-forge openbabel -y
-
-# 3) Point Complexa to RF3 installed in foundry (+ jax-metal compatibility)
-export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
-export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
-export ENABLE_PJRT_COMPATIBILITY=1
-```
-
-Optional experimental runtime env on Python 3.13 (keep `foundry` on Python 3.12):
-
-```bash
-conda create -n proteina313 python=3.13 -y
+# 2) Proteina-Complexa runtime env (default)
+conda create -n proteina-complexa python=3.13 -y
 ./env/build_uv_env.sh --python 3.13
 source .venv/bin/activate
-conda run -n proteina313 pip install -e .
-conda run -n proteina313 pip install "jax==0.4.38" "jaxlib==0.4.38" "jax-metal==0.1.0"
-conda run -n proteina313 complexa init uv --force
+conda run -n proteina-complexa pip install -e .
+conda run -n proteina-complexa pip install jax-mps
+conda run -n proteina-complexa complexa init uv --force
+source env.sh
+conda run -n proteina-complexa complexa download --complexa-all
+conda install -n proteina-complexa -c conda-forge openbabel -y
+conda install -n proteina-complexa -c conda-forge rdkit -y
+
+# 3) Point Complexa to RF3 installed in foundry
+export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
+export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
+```
+
+Optional legacy runtime env on Python 3.12:
+
+```bash
+# Legacy alternate runtime env (side-by-side with the default py3.13 env)
+conda create -n proteina-complexa-py312 python=3.12 -y
+./env/build_uv_env.sh --python 3.12
+source .venv/bin/activate
+conda run -n proteina-complexa-py312 pip install -e .
+conda run -n proteina-complexa-py312 pip install "jax==0.4.26" "jaxlib==0.4.26" "jax-metal==0.1.0"
+# Only needed for jax-metal legacy path:
+export ENABLE_PJRT_COMPATIBILITY=1
+conda run -n proteina-complexa-py312 complexa init uv --force
 ```
 
 Optional checkpoint wiring for ProteinMPNN/LigandMPNN:
@@ -362,7 +366,7 @@ source env.sh
 
 If you have RF3/AF2 tooling available and want full binder metrics, use the `*_mps_rf3.yaml` presets.
 
-Keep Complexa running in your dedicated env (for example `proteina`). If RF3 is installed in a separate env (for example `foundry` from <https://github.com/fnachon/foundry>), set RF3 env vars first:
+Keep Complexa running in your dedicated env (for example `proteina-complexa`). If RF3 is installed in a separate env (for example `foundry` from <https://github.com/fnachon/foundry>), set RF3 env vars first:
 
 ```bash
 export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
@@ -372,7 +376,7 @@ export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remappe
 Then run the RF3-enabled preset:
 
 ```bash
-conda run -n proteina complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
+conda run -n proteina-complexa complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
     ++run_name=my_binder_mps_rf3 \
     ++generation.task_name=02_PDL1
 ```
@@ -440,9 +444,9 @@ complexa design configs/search_binder_local_pipeline.yaml \
 # Change reward weights (ligand binder / AME -- RF3)
 ++generation.reward_model.reward_models.rf3folding.reward_weights.min_ipAE=-2.0
 
-# Experimental refinement backend on Apple Silicon (requires jax-metal)
+# Experimental refinement backend on Apple Silicon (requires Apple JAX backend)
 ++generation.refinement.algorithm=sequence_hallucination
-++generation.refinement.jax_backend=metal
+++generation.refinement.jax_backend=mps
 
 # Change success thresholds for analysis
 ++aggregation.success_thresholds.i_pAE.threshold=5.0
@@ -621,16 +625,22 @@ complexa init uv --force
 source env.sh
 ```
 
-- Install Complexa into your dedicated runtime env (recommended: `proteina`):
+- Install Complexa into your dedicated runtime env (recommended: `proteina-complexa`):
 
 ```bash
-conda run -n proteina pip install -e .
+conda run -n proteina-complexa pip install -e .
 ```
 
 - If you instead see `ModuleNotFoundError: No module named 'Bio'`, install Biopython in the same runtime env:
 
 ```bash
-conda run -n proteina pip install biopython
+conda run -n proteina-complexa pip install biopython
+```
+
+- If you see `ModuleNotFoundError: No module named 'rdkit'`, install RDKit in the same runtime env:
+
+```bash
+conda install -n proteina-complexa -c conda-forge rdkit -y
 ```
 
 Manual fallback (if you are not using `env.sh`):
@@ -669,7 +679,7 @@ For Apple Silicon presets, Complexa now logs backend diagnostics automatically (
 Quick check in your runtime env:
 
 ```bash
-conda run -n proteina python -c "import torch; print('mps_built', torch.backends.mps.is_built()); print('mps_available', torch.backends.mps.is_available())"
+conda run -n proteina-complexa python -c "import torch; print('mps_built', torch.backends.mps.is_built()); print('mps_available', torch.backends.mps.is_available())"
 ```
 
 If you want to explicitly request MPS selection when available:
@@ -680,25 +690,26 @@ export COMPLEXA_ACCELERATOR=mps
 
 If MPS is still unavailable, Complexa will fall back to CPU and print the exact PyTorch runtime reason in logs.
 
-### Experimental JAX Metal for Refinement
+### Experimental Apple JAX for Refinement
 
-`sequence_hallucination` refinement can be pinned to an experimental JAX Metal backend on Apple Silicon:
+`sequence_hallucination` refinement can be pinned to an experimental Apple JAX backend on Apple Silicon:
 
 ```bash
-# Python 3.12 (stable)
-conda run -n proteina pip install "jax==0.4.26" "jaxlib==0.4.26" "jax-metal==0.1.0"
+# Python 3.13 (default preferred path)
+conda run -n proteina-complexa pip install jax-mps
 
-# Python 3.13 (experimental)
-conda run -n proteina313 pip install "jax==0.4.38" "jaxlib==0.4.38" "jax-metal==0.1.0"
-
-export ENABLE_PJRT_COMPATIBILITY=1
 ++generation.refinement.algorithm=sequence_hallucination \
-++generation.refinement.jax_backend=metal
+++generation.refinement.jax_backend=mps
+
+# Optional legacy path on Python 3.12
+conda run -n proteina-complexa pip install "jax==0.4.26" "jaxlib==0.4.26" "jax-metal==0.1.0"
+# Only needed for jax-metal legacy path:
+export ENABLE_PJRT_COMPATIBILITY=1
 ```
 
-Supported values are `auto` (default), `metal`, `gpu`, `cpu`.
-`auto` prefers CUDA GPU, then Metal, then CPU.
-If `metal` is requested but unavailable, refinement fails fast with an explicit error.
+Supported values are `auto` (default), `mps`, `metal` (legacy alias), `gpu`, `cpu`.
+`auto` prefers CUDA GPU, then Apple JAX backend (`mps`/`metal`), then CPU.
+If `mps` is requested but unavailable, refinement fails fast with an explicit error.
 
 ### SLURM Job Failures
 

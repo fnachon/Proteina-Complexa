@@ -197,9 +197,10 @@ For RF3-enabled Apple Silicon workflows, use:
 
 Recommended dependency layout on macOS:
 
-- Keep Proteina-Complexa in a dedicated runtime env (for example `proteina`).
+- Keep Proteina-Complexa in a dedicated runtime env (for example `proteina-complexa`).
 - Install Proteina-Complexa from the MPS-enabled fork:
   <https://github.com/fnachon/Proteina-Complexa>.
+  This fork is the default clone source and contains required fixes/patches.
 - Install Foundry in a separate env (for example `foundry`) from
   <https://github.com/fnachon/foundry>.
 - Use Foundry to provide RF3 + ProteinMPNN/LigandMPNN + AtomWorks dependencies.
@@ -215,10 +216,17 @@ conda run -n foundry pip install torch
 conda run -n foundry pip install "rc-foundry[all] @ git+https://github.com/fnachon/foundry.git"
 conda run -n foundry foundry install base-models
 
-conda create -n proteina python=3.12 -y
-conda run -n proteina pip install -e .
-conda run -n proteina pip install "jax==0.4.26" "jaxlib==0.4.26" "jax-metal==0.1.0"
-export ENABLE_PJRT_COMPATIBILITY=1
+conda create -n proteina-complexa python=3.13 -y
+./env/build_uv_env.sh --python 3.13
+source .venv/bin/activate
+conda run -n proteina-complexa pip install -e .
+conda run -n proteina-complexa pip install jax-mps
+conda install -n proteina-complexa -c conda-forge openbabel -y
+conda install -n proteina-complexa -c conda-forge rdkit -y
+
+# Optional legacy JAX Metal path (Python 3.12):
+# conda run -n proteina-complexa pip install "jax==0.4.26" "jaxlib==0.4.26" "jax-metal==0.1.0"
+# export ENABLE_PJRT_COMPATIBILITY=1
 ```
 
 Each preset inherits from its corresponding local pipeline and applies MPS-safe defaults:
@@ -346,7 +354,7 @@ refinement:
   n_greedy_iters: 15                  # Semigreedy hard iterations (stage 4)
   n_recycles: 3                       # AF2 recycle count
   greedy_percentage: 1                # % of residues to try per greedy step
-  jax_backend: auto                   # auto, metal (experimental), gpu, cpu
+  jax_backend: auto                   # auto, mps (experimental), metal (legacy alias), gpu, cpu
 
   # Loss weights for ColabDesign AF2 optimisation
   loss_weights:
@@ -375,7 +383,7 @@ refinement:
 | `n_greedy_iters` | Semigreedy hard iterations | `15` |
 | `n_recycles` | AF2 recycle count | `3` |
 | `greedy_percentage` | % of binder residues to try per greedy step (higher = more aggressive) | `1` |
-| `jax_backend` | JAX backend selector for refinement: `auto`, `metal` (experimental), `gpu`, `cpu` | `auto` |
+| `jax_backend` | JAX backend selector for refinement: `auto`, `mps` (experimental), `metal` (legacy alias), `gpu`, `cpu` | `auto` |
 
 **Loss weight reference:**
 
@@ -426,10 +434,12 @@ Only samples targeted by `refine_targets` are replaced with their refined versio
   ++generation.refinement.enable_soft_optimization=true \
   ++generation.refinement.greedy_percentage=5
 
-# Experimental Apple Silicon refinement on JAX Metal
-export ENABLE_PJRT_COMPATIBILITY=1
+# Experimental Apple Silicon refinement on Apple JAX backend
 ++generation.refinement.algorithm=sequence_hallucination \
-  ++generation.refinement.jax_backend=metal
+  ++generation.refinement.jax_backend=mps
+
+# Optional legacy compatibility for jax-metal only
+export ENABLE_PJRT_COMPATIBILITY=1
 
 # Tune loss weights
 ++generation.refinement.loss_weights.rg=0.5 \

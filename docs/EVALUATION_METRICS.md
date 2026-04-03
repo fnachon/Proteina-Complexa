@@ -160,6 +160,8 @@ metric:
 
 Evaluates small-molecule binder designs. Uses RF3 for refolding and LigandMPNN for sequence redesign. Produces additional ligand-specific RMSD columns.
 
+Prerequisite for ligand workflows: ensure both `rdkit` and `openbabel` are installed in the runtime environment.
+
 ```yaml
 protein_type: binder
 
@@ -1325,7 +1327,7 @@ If either is unset, RF3 reward/refolding will fail at initialization with a clea
 
 For Apple Silicon MPS presets, RF3 variables are not required for the default workflow because RF3-dependent binder refolding is disabled by default.
 
-macOS example (run Complexa in `proteina`, reuse RF3 installed in a separate
+macOS example (run Complexa in `proteina-complexa`, reuse RF3 installed in a separate
 `foundry` env from <https://github.com/fnachon/foundry>):
 
 ```bash
@@ -1336,7 +1338,7 @@ export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remappe
 After setting these, use RF3-enabled MPS presets directly:
 
 ```bash
-conda run -n proteina complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
+conda run -n proteina-complexa complexa design configs/search_binder_local_pipeline_mps_rf3.yaml \
     ++run_name=my_binder_mps_rf3 \
     ++generation.task_name=02_PDL1
 ```
