@@ -7,7 +7,9 @@ dependencies = [
     # Core utilities
     "python-dotenv==1.0.1",
     "einops==0.6",
-    "dm-tree==0.1.8",
+    # dm-tree 0.1.8 does not build on Python 3.13 with recent CMake/pybind11.
+    "dm-tree==0.1.8; python_version < '3.13'",
+    "dm-tree==0.1.10; python_version >= '3.13'",
     "loguru==0.7.2",
     "numpy>=1.23.5",
     "tqdm==4.66.4",
@@ -29,7 +31,9 @@ dependencies = [
     
     # Data processing
     "pandas>=2.3.0",
-    "scipy==1.12.0",
+    # scipy 1.12.0 has no cp313 wheel on macOS arm64.
+    "scipy==1.12.0; python_version < '3.13'",
+    "scipy==1.17.1; python_version >= '3.13'",
     "h5py",
     "xarray",
     "modin[ray]",
@@ -78,6 +82,7 @@ foundry_install_command = "conda run -n foundry pip install \"rc-foundry[all] @ 
 foundry_models_command = "conda run -n foundry foundry install base-models"
 complexa_install_command = "conda run -n proteina pip install -e ."
 jax_metal_install_command = "conda run -n proteina pip install \"jax==0.4.26\" \"jaxlib==0.4.26\" \"jax-metal==0.1.0\""
+jax_metal_install_command_py313 = "conda run -n proteina pip install \"jax==0.4.38\" \"jaxlib==0.4.38\" \"jax-metal==0.1.0\""
 jax_metal_compat_env_var_example = "ENABLE_PJRT_COMPATIBILITY=1"
 complexa_init_command = "conda run -n proteina complexa init uv --force"
 complexa_download_command = "conda run -n proteina complexa download --complexa-all"

@@ -12,7 +12,7 @@ set -e
 # Options:
 #   --clean         Remove existing .venv and UV cache before building (fresh start)
 #   --minimal       Skip optional dependencies (JAX, ColabFold, tmol)
-#   --python VER    Python version: 3.11 or 3.12 (default: 3.12)
+#   --python VER    Python version: 3.11, 3.12, or 3.13 (default: 3.12)
 #   --name NAME     Custom prompt name shown when venv is activated (default: complexa)
 #   --root PATH     Specify installation root directory (where .venv will be created)
 #   -h, --help      Show this help message
@@ -21,6 +21,7 @@ set -e
 #   ./build_public_uv_env.sh                      # Full install (Python 3.12)
 #   ./build_public_uv_env.sh --minimal            # Base dependencies only
 #   ./build_public_uv_env.sh --python 3.11        # Full install with Python 3.11
+#   ./build_public_uv_env.sh --python 3.13        # Experimental Python 3.13 path
 #   ./build_public_uv_env.sh --name myenv         # Custom prompt: (myenv)
 #   ./build_public_uv_env.sh --root /path/to/dir  # Create .venv in custom directory
 # ==============================================================================
@@ -45,8 +46,8 @@ while [[ $# -gt 0 ]]; do
             ;;
         --python)
             PYTHON_VERSION="$2"
-            if [[ "$PYTHON_VERSION" != "3.11" && "$PYTHON_VERSION" != "3.12" ]]; then
-                echo "Error: Python version must be 3.11 or 3.12"
+            if [[ "$PYTHON_VERSION" != "3.11" && "$PYTHON_VERSION" != "3.12" && "$PYTHON_VERSION" != "3.13" ]]; then
+                echo "Error: Python version must be 3.11, 3.12, or 3.13"
                 exit 1
             fi
             shift 2
@@ -65,7 +66,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --clean         Remove existing .venv and UV cache before building"
             echo "  --minimal       Skip optional dependencies (JAX, ColabFold, tmol)"
-            echo "  --python VER    Python version: 3.11 or 3.12 (default: 3.12)"
+            echo "  --python VER    Python version: 3.11, 3.12, or 3.13 (default: 3.12)"
             echo "  --name NAME     Custom prompt name (default: complexa)"
             echo "  --root PATH     Specify where to create .venv (default: project dir)"
             echo "  -h, --help      Show this help message"
@@ -74,6 +75,7 @@ while [[ $# -gt 0 ]]; do
             echo "  ./build_public_uv_env.sh                # Full install (Python 3.12)"
             echo "  ./build_public_uv_env.sh --minimal      # Base dependencies only"
             echo "  ./build_public_uv_env.sh --python 3.11  # Full install with Python 3.11"
+            echo "  ./build_public_uv_env.sh --python 3.13  # Experimental Python 3.13 path"
             exit 0
             ;;
         -*)
@@ -121,6 +123,9 @@ echo "Install directory: $VENV_DIR"
 echo "Python version: $PYTHON_VERSION"
 echo "Prompt name: $VENV_NAME"
 echo "Full install: $FULL_INSTALL"
+if [[ "$PYTHON_VERSION" == "3.13" ]]; then
+    echo "WARNING: Python 3.13 path is experimental (dependency pins differ from 3.12)."
+fi
 echo ""
 
 OS_NAME="$(uname -s)"
@@ -198,25 +203,50 @@ uv pip install "atomworks[ml,openbabel,dev]" || echo "Warning: atomworks install
 if [ "$FULL_INSTALL" = true ]; then
     echo "[7/8] Installing full dependencies (ColabFold, JAX, tmol)..."
 
-    echo "      -> ColabDesign & AlphaFold-ColabFold..."
-    uv pip install colabdesign==1.1.1 alphafold-colabfold==2.3.7
+    if [[ "$IS_APPLE_SILICON" == "true" && "$PYTHON_VERSION" == "3.13" ]]; then
+        echo "      -> ColabDesign & AlphaFold-ColabFold (Python 3.13 compatibility pins)..."
+        uv pip install \
+            colabdesign==1.1.1 \
+            alphafold-colabfold==2.3.7 \
+            chex==0.1.86 \
+            dm-haiku==0.0.12 \
+            optax==0.2.2 \
+            flax==0.9.0 \
+            jax==0.4.38 \
+            jaxlib==0.4.38 \
+            jax-metal==0.1.0
+    else
+        echo "      -> ColabDesign & AlphaFold-ColabFold..."
+        uv pip install colabdesign==1.1.1 alphafold-colabfold==2.3.7
+    fi
 
     echo "      -> Installing local colabdesign (community_models/colabdesign)..."
     uv pip install -e "$PROJECT_DIR/community_models/colabdesign"
 
     if [[ "$IS_APPLE_SILICON" == "true" ]]; then
-        echo "      -> JAX + jax-metal (experimental Apple Silicon backend)..."
-        # Keep these pins in sync with docs/INFERENCE.md and pyproject metadata.
-        # jax-metal 0.1.0 is compatible with jax/jaxlib 0.4.26.
-        uv pip install jax==0.4.26 jaxlib==0.4.26 jax-metal==0.1.0
+        if [[ "$PYTHON_VERSION" == "3.13" ]]; then
+            echo "      -> JAX + jax-metal already installed above with Python 3.13 pins."
+        else
+            echo "      -> JAX + jax-metal (experimental Apple Silicon backend)..."
+            # Keep these pins in sync with docs/INFERENCE.md and pyproject metadata.
+            # jax-metal 0.1.0 is compatible with jax/jaxlib 0.4.26 on the stable 3.12 path.
+            uv pip install jax==0.4.26 jaxlib==0.4.26 jax-metal==0.1.0
+        fi
     else
-        echo "      -> JAX with CUDA..."
-        uv pip install jaxlib==0.4.29+cuda12.cudnn91 \
-            -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-        uv pip install "jax[cuda12]==0.4.29" \
-            -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+        if [[ "$PYTHON_VERSION" == "3.13" ]]; then
+            echo "      -> Python 3.13 non-Apple path: installing CPU JAX pins (CUDA wheels may be unavailable)."
+            uv pip install jax==0.4.38 jaxlib==0.4.38
+        else
+            echo "      -> JAX with CUDA..."
+            uv pip install jaxlib==0.4.29+cuda12.cudnn91 \
+                -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+            uv pip install "jax[cuda12]==0.4.29" \
+                -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+        fi
     fi
-    uv pip install flax==0.9.0 --no-deps
+    if [[ "$PYTHON_VERSION" != "3.13" ]]; then
+        uv pip install flax==0.9.0 --no-deps
+    fi
 
     echo "      -> Tmol..."
     uv pip install "git+https://github.com/uw-ipd/tmol.git@d8a6f7f9649d36e74440bca25246ee7c467ce490" || echo "Warning: tmol install failed"
@@ -231,7 +261,8 @@ if [[ "$PYTHON_VERSION" == "3.12" ]]; then
     echo "[8/8] Installing Foundry (rc-foundry)..."
     uv pip install "rc-foundry[all]"
 else
-    echo "[8/8] Not able to install RF# via rc-foundary. Please try python 3.12."
+    echo "[8/8] Skipping Foundry install in this env."
+    echo "      -> For RF3/Foundry, keep a separate Python 3.12 env and export RF3 paths."
 fi
 
 uv pip install biotite==1.6.0

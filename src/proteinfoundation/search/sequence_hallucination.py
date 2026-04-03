@@ -4,8 +4,10 @@ This module provides sequence hallucination for improving protein structures
 using ColabDesign's AlphaFold2 optimization pipeline.
 """
 
+import inspect
 import math
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -288,6 +290,73 @@ class SequenceHallucination:
         add_i_ptm_loss(af_model, loss_weights.get("i_ptm", 0.0))
         add_helix_binder_loss(af_model, loss_weights.get("helix_binder", 0.0))
 
+    @staticmethod
+    def _make_afdesign_model(*, num_recycles: int, device: Any) -> Any:
+        """Create mk_afdesign_model with best-effort compatibility across versions.
+
+        ColabDesign constructor kwargs differ between releases. We inspect the
+        callable signature and drop unsupported kwargs so refinement keeps
+        running on older/newer variants.
+        """
+        from colabdesign import mk_afdesign_model
+
+        model_kwargs = {
+            "protocol": "binder",
+            "debug": False,
+            "data_dir": os.environ.get("AF2_DIR"),
+            "use_multimer": True,
+            "num_recycles": num_recycles,
+            "use_initial_guess": False,
+            "use_initial_atom_pos": False,
+            "best_metric": "loss",
+            "device": device,
+        }
+
+        try:
+            signature = inspect.signature(mk_afdesign_model)
+            accepts_var_kwargs = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()
+            )
+            if not accepts_var_kwargs:
+                accepted_keys = set(signature.parameters.keys())
+                dropped_keys = sorted(k for k in model_kwargs if k not in accepted_keys)
+                if dropped_keys:
+                    logger.warning(
+                        "mk_afdesign_model does not accept constructor kwargs "
+                        f"{dropped_keys}; dropping them for compatibility."
+                    )
+                model_kwargs = {k: v for k, v in model_kwargs.items() if k in accepted_keys}
+        except (TypeError, ValueError) as sig_exc:
+            logger.debug(f"Could not inspect mk_afdesign_model signature: {sig_exc}")
+        current_kwargs = dict(model_kwargs)
+        for _ in range(4):
+            try:
+                return mk_afdesign_model(**current_kwargs)
+            except AssertionError as exc:
+                msg = str(exc)
+                if "following inputs were not set" not in msg:
+                    raise
+
+                # Some ColabDesign versions accept **kwargs in signature but
+                # validate supported keys at runtime. Drop unknown keys and
+                # retry.
+                # Extract key names from "{'k': v, ...}" even when values are
+                # non-literal objects like CpuDevice(id=0).
+                key_candidates = re.findall(r"'([^']+)':", msg)
+                dropped_keys = [k for k in key_candidates if k in current_kwargs]
+
+                if not dropped_keys:
+                    raise
+
+                for key in dropped_keys:
+                    current_kwargs.pop(key, None)
+                logger.warning(
+                    "mk_afdesign_model rejected constructor kwargs "
+                    f"{dropped_keys}; retrying without them."
+                )
+
+        return mk_afdesign_model(**current_kwargs)
+
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
@@ -346,25 +415,12 @@ class SequenceHallucination:
         temp_dir = tempfile.mkdtemp()
         try:
             target_chain, binder_chain = None, None
-            # Import after backend selection so JAX env vars are already set.
-            from colabdesign import mk_afdesign_model
-
             # BUG FIX (performance): the original created a new
             # mk_afdesign_model per sample which is correct but very
             # slow (reloads weights each time).  We create the model
             # once and guard against callback accumulation via the
             # _register_loss_callbacks / _set_builtin_weights split.
-            af_model = mk_afdesign_model(
-                protocol="binder",
-                debug=False,
-                data_dir=os.environ.get("AF2_DIR"),
-                use_multimer=True,
-                num_recycles=n_recycles,
-                use_initial_guess=False,
-                use_initial_atom_pos=False,
-                best_metric="loss",
-                device=jax_device,
-            )
+            af_model = self._make_afdesign_model(num_recycles=n_recycles, device=jax_device)
 
             refined_sample_prots: list[dict[str, torch.Tensor]] = []
             callbacks_registered = False
@@ -493,15 +549,8 @@ class SequenceHallucination:
 
                         if cpu_fallback_model is None:
                             cpu_device, _ = self._select_jax_device("cpu")
-                            cpu_fallback_model = mk_afdesign_model(
-                                protocol="binder",
-                                debug=False,
-                                data_dir=os.environ.get("AF2_DIR"),
-                                use_multimer=True,
+                            cpu_fallback_model = self._make_afdesign_model(
                                 num_recycles=n_recycles,
-                                use_initial_guess=False,
-                                use_initial_atom_pos=False,
-                                best_metric="loss",
                                 device=cpu_device,
                             )
 

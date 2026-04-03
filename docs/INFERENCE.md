@@ -264,6 +264,10 @@ For new users on Apple Silicon, use two separate conda environments:
 - `foundry` for RF3, ProteinMPNN/LigandMPNN, and AtomWorks.
 - `proteina` for running `complexa`.
 
+Recommended split:
+- Stable path: keep both envs on Python 3.12.
+- Experimental path: use Python 3.13 only for the `proteina` runtime env, keep `foundry` on Python 3.12.
+
 Install Foundry from the Apple Silicon fork: <https://github.com/fnachon/foundry>
 Install Proteina-Complexa from the MPS-enabled fork: <https://github.com/fnachon/Proteina-Complexa>
 Canonical values for this setup are mirrored in `pyproject.toml` under
@@ -295,6 +299,17 @@ conda install -n proteina -c conda-forge openbabel -y
 export RF3_EXEC_PATH=$(conda run -n foundry which rf3)
 export RF3_CKPT_PATH=$HOME/.foundry/checkpoints/rf3_foundry_01_24_latest_remapped.ckpt
 export ENABLE_PJRT_COMPATIBILITY=1
+```
+
+Optional experimental runtime env on Python 3.13 (keep `foundry` on Python 3.12):
+
+```bash
+conda create -n proteina313 python=3.13 -y
+./env/build_uv_env.sh --python 3.13
+source .venv/bin/activate
+conda run -n proteina313 pip install -e .
+conda run -n proteina313 pip install "jax==0.4.38" "jaxlib==0.4.38" "jax-metal==0.1.0"
+conda run -n proteina313 complexa init uv --force
 ```
 
 Optional checkpoint wiring for ProteinMPNN/LigandMPNN:
@@ -670,7 +685,12 @@ If MPS is still unavailable, Complexa will fall back to CPU and print the exact 
 `sequence_hallucination` refinement can be pinned to an experimental JAX Metal backend on Apple Silicon:
 
 ```bash
+# Python 3.12 (stable)
 conda run -n proteina pip install "jax==0.4.26" "jaxlib==0.4.26" "jax-metal==0.1.0"
+
+# Python 3.13 (experimental)
+conda run -n proteina313 pip install "jax==0.4.38" "jaxlib==0.4.38" "jax-metal==0.1.0"
+
 export ENABLE_PJRT_COMPATIBILITY=1
 ++generation.refinement.algorithm=sequence_hallucination \
 ++generation.refinement.jax_backend=metal

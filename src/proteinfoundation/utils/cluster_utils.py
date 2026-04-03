@@ -9,14 +9,26 @@ import subprocess
 import tempfile
 from multiprocessing import Pool, cpu_count
 
-import modin.pandas as mpd
 import pandas as pd
 import torch
-from graphein.utils.dependencies import is_tool
 from lightning.pytorch.utilities import rank_zero_only
 from loguru import logger
 from torch.utils.data import Sampler
 from tqdm import tqdm
+
+try:
+    from graphein.utils.dependencies import is_tool
+except Exception as exc:
+    logger.warning(f"Graphein unavailable ({exc}); falling back to shutil.which for is_tool().")
+
+    def is_tool(name: str) -> bool:
+        return shutil.which(name) is not None
+
+try:
+    import modin.pandas as mpd
+except Exception as exc:
+    logger.warning(f"Modin unavailable ({exc}); falling back to pandas for clustering utilities.")
+    mpd = pd
 
 
 @rank_zero_only
