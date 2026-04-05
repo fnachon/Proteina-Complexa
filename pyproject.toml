@@ -82,6 +82,9 @@ proteina_clone_command = "git clone https://github.com/fnachon/Proteina-Complexa
 foundry_install_command = "conda run -n foundry pip install \"rc-foundry[all] @ git+https://github.com/fnachon/foundry.git\""
 foundry_models_command = "conda run -n foundry foundry install base-models"
 complexa_install_command = "conda run -n proteina-complexa pip install -e ."
+tmol_repo = "https://github.com/fnachon/tmol"
+tmol_install_command = "conda run -n proteina-complexa pip install \"git+https://github.com/fnachon/tmol.git\""
+tmol_install_command_macos_link_fix = "TMOL_TORCH_PREFIX=$(conda run -n proteina-complexa python -c \"import os, torch; print(os.path.dirname(torch.__file__))\") && conda run -n proteina-complexa env TORCH_INSTALL_PREFIX=$TMOL_TORCH_PREFIX CMAKE_PREFIX_PATH=$TMOL_TORCH_PREFIX pip install \"git+https://github.com/fnachon/tmol.git\" -Ccmake.define.Torch_DIR=$TMOL_TORCH_PREFIX/share/cmake/Torch -Ccmake.define.Caffe2_DIR=$TMOL_TORCH_PREFIX/share/cmake/Caffe2 -Ccmake.define.TMOL_BUILD_MPS=ON"
 # Legacy Python 3.12 path:
 jax_metal_install_command = "conda run -n proteina-complexa pip install \"jax==0.4.26\" \"jaxlib==0.4.26\" \"jax-metal==0.1.0\""
 # Default Python 3.13 path:

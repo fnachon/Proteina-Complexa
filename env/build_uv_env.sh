@@ -258,7 +258,23 @@ if [ "$FULL_INSTALL" = true ]; then
     fi
 
     echo "      -> Tmol..."
-    uv pip install "git+https://github.com/uw-ipd/tmol.git@d8a6f7f9649d36e74440bca25246ee7c467ce490" || echo "Warning: tmol install failed"
+    if [[ "$IS_APPLE_SILICON" == "true" ]]; then
+        echo "      -> Apple Silicon: installing MPS-enabled tmol fork (fnachon/tmol)..."
+        TMOL_TORCH_PREFIX="$(python -c 'import os, torch; print(os.path.dirname(torch.__file__))')"
+        TMOL_TORCH_DIR="$TMOL_TORCH_PREFIX/share/cmake/Torch"
+        TMOL_CAFFE2_DIR="$TMOL_TORCH_PREFIX/share/cmake/Caffe2"
+
+        # On macOS systems with Homebrew libtorch, force CMake to link against
+        # the active env's PyTorch CMake package to avoid linker mismatches.
+        env TORCH_INSTALL_PREFIX="$TMOL_TORCH_PREFIX" \
+            CMAKE_PREFIX_PATH="$TMOL_TORCH_PREFIX" \
+            pip install "git+https://github.com/fnachon/tmol.git" \
+                -Ccmake.define.Torch_DIR="$TMOL_TORCH_DIR" \
+                -Ccmake.define.Caffe2_DIR="$TMOL_CAFFE2_DIR" \
+                -Ccmake.define.TMOL_BUILD_MPS=ON || echo "Warning: tmol install failed"
+    else
+        uv pip install "git+https://github.com/uw-ipd/tmol.git@d8a6f7f9649d36e74440bca25246ee7c467ce490" || echo "Warning: tmol install failed"
+    fi
 else
     echo "[7/8] Skipping optional dependencies (omit --minimal to install)"
 fi

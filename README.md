@@ -96,7 +96,7 @@ source .venv/bin/activate
 
 #### macOS (Apple Silicon) Notes
 
-`build_uv_env.sh` auto-detects Apple Silicon and configures a compatible environment (PyTorch with MPS support, no CUDA-only wheel pins, JAX CPU fallback).
+`build_uv_env.sh` auto-detects Apple Silicon and configures a compatible environment (PyTorch with MPS support, no CUDA-only wheel pins, JAX fallback handling, and tmol installation from the MPS fork at `fnachon/tmol`).
 
 For Apple Silicon / MPS runs, install Proteina-Complexa from the MPS-enabled fork:
 <https://github.com/fnachon/Proteina-Complexa>
@@ -130,6 +130,7 @@ conda create -n proteina-complexa python=3.13 -y
 source .venv/bin/activate
 conda run -n proteina-complexa pip install -e .
 conda run -n proteina-complexa pip install jax-mps
+conda run -n proteina-complexa pip install "git+https://github.com/fnachon/tmol.git"
 conda run -n proteina-complexa complexa init uv --force
 source env.sh
 conda run -n proteina-complexa complexa download --complexa-all
@@ -228,11 +229,27 @@ conda run -n proteina-complexa complexa design configs/search_binder_local_pipel
 >     # Pre-install 3.12-compatible versions of llvmlite/numba
 >     uv pip install "llvmlite>=0.41" "numba>=0.59" || true
 > fi
-> uv pip install "git+https://github.com/uw-ipd/tmol.git" || echo "Warning: tmol install failed"
+> uv pip install "git+https://github.com/fnachon/tmol.git" || echo "Warning: tmol install failed"
 > ```
 >
 > This is not needed on all systems -- it depends on which versions of `llvmlite` and `numba`
 > your resolver picks up. If the default install works for you, no action is needed.
+
+> **Apple Silicon linker note (Homebrew + conda/PyTorch)**
+>
+> If tmol fails to link on macOS because CMake picks `/opt/homebrew/lib/libtorch*.dylib` instead of
+> the current conda env's PyTorch libraries, install tmol with explicit Torch/Caffe2 CMake paths:
+>
+> ```bash
+> TMOL_TORCH_PREFIX=$(conda run -n proteina-complexa python -c "import os, torch; print(os.path.dirname(torch.__file__))")
+> conda run -n proteina-complexa env \
+>     TORCH_INSTALL_PREFIX=$TMOL_TORCH_PREFIX \
+>     CMAKE_PREFIX_PATH=$TMOL_TORCH_PREFIX \
+>     pip install "git+https://github.com/fnachon/tmol.git" \
+>         -Ccmake.define.Torch_DIR=$TMOL_TORCH_PREFIX/share/cmake/Torch \
+>         -Ccmake.define.Caffe2_DIR=$TMOL_TORCH_PREFIX/share/cmake/Caffe2 \
+>         -Ccmake.define.TMOL_BUILD_MPS=ON
+> ```
 
 ### Option 2: Docker Container
 
