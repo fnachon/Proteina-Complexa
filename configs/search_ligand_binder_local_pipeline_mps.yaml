@@ -1,8 +1,10 @@
 # Ligand Binder Design Pipeline Configuration (Apple Silicon / MPS preset)
 #
 # This preset extends the standard local ligand-binder pipeline with MPS-friendly
-# defaults that avoid RF3-dependent reward-guided search and binder refolding
-# during evaluation.
+# defaults while keeping reward-guided search and refinement enabled.
+# Requires:
+#   - RF3_EXEC_PATH
+#   - RF3_CKPT_PATH
 #
 # Usage:
 #   complexa design configs/search_ligand_binder_local_pipeline_mps.yaml ++generation.task_name=39_7V11_LIGAND
@@ -21,17 +23,39 @@ eval_njobs: 1
 
 generation:
   search:
-    algorithm: single-pass
-  reward_model: null
+    algorithm: best-of-n
+  reward_model:
+    _target_: "proteinfoundation.rewards.base_reward.CompositeRewardModel"
+    reward_models:
+      rf3folding:
+        _target_: "proteinfoundation.rewards.rf3_reward.RF3RewardRunner"
+        ckpt_path: ${oc.env:RF3_CKPT_PATH}
+        rf3_path: ${oc.env:RF3_EXEC_PATH}
+        normalize_pae: true
+        reward_weights:
+          min_ipAE: -1.0
+          plddt: 0.0
+          ipAE: 0.0
+          mean_min_ipAE: 0.0
+          mean_ipAE: 0.0
+          min_mean_ipAE: 0.0
+          pAE: 0.0
+          ipTM: 0.0
+          pTM: 0.0
+          ranking_score: 0.0
+          has_clash: 0.0
+          min_ipSAE: 0.0
+          max_ipSAE: 0.0
+          avg_ipSAE: 0.0
   refinement:
-    algorithm: null
+    algorithm: sequence_hallucination
 
 metric:
-  # Disable binder refolding metrics (RF3 path) for the MPS preset.
-  compute_binder_metrics: false
+  compute_binder_metrics: true
+  binder_folding_method: rf3_latest
   compute_monomer_metrics: true
   compute_esm_metrics: true
   sequence_types: [self]
 
 aggregation:
-  analysis_modes: [monomer]
+  analysis_modes: [binder, monomer]
