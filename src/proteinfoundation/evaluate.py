@@ -747,6 +747,11 @@ def main(cfg: DictConfig) -> None:
             target_task_name, _, _, _ = get_target_info(cfg)
         except Exception as e:
             logger.warning(f"Could not get target info: {e}")
+    elif run_motif:
+        try:
+            _, target_task_name, _ = get_motif_dataset_config(cfg)
+        except Exception as e:
+            logger.warning(f"Could not get motif task name: {e}")
 
     # Construct paths if not explicitly provided
     if sample_storage_path is None or output_dir is None:

@@ -35,6 +35,7 @@ dataloader:
         max_length: ${.....motif_dict_cfg.${.task_name}.motif_max_length}
         segment_order: ${.....motif_dict_cfg.${.task_name}.segment_order}
         padding: True
+        motif_csv_path: null  # populated by generate.py at runtime with the per-job motif_info CSV path
     transforms:
       - _target_: proteinfoundation.datasets.transforms.CoordsTensorCenteringTransform
         tensor_name: "x_motif"
@@ -90,3 +91,15 @@ filter:
   delete_non_top_n_samples: false
   dedup_sequence: true
   reward_threshold: null
+
+# =============================================================================
+# Reward model
+# =============================================================================
+# Cheap, structure-only reward (no folding model) that penalizes broken/clashing
+# backbone connectivity. Used to guide reward-based search (best-of-n, beam-search,
+# fk-steering, mcts) away from geometrically invalid samples.
+reward_model:
+  _target_: "proteinfoundation.rewards.base_reward.CompositeRewardModel"
+  reward_models:
+    backbone_continuity:
+      _target_: "proteinfoundation.rewards.backbone_continuity_reward.BackboneContinuityRewardModel"

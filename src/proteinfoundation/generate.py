@@ -7,6 +7,7 @@ from proteinfoundation.cli.startup import quiet_startup
 quiet_startup()
 
 import os
+import re
 import sys
 import time
 from collections import defaultdict
@@ -481,7 +482,7 @@ def save_motif_predictions(
     predictions: list[dict],
     job_id: int = 0,
     motif_pdb_name: str = None,
-) -> list[str]:
+) -> tuple[list[str], pd.DataFrame]:
     """
     Saves generated motif samples.
 
@@ -491,16 +492,19 @@ def save_motif_predictions(
             - 'coors': [batch_size, n, 37, 3]
             - 'residue_type': [batch_size, n]
             - 'mask': [batch_size, n]
+            - 'rewards': [batch_size] (optional)
         job_id: job number, used to store files.
         motif_pdb_name: name of motif PDB file
 
     Returns:
-        List of PDB file paths
+        Tuple of (pdb_paths, reward_df)
     """
     pdb_paths = []
+    rewards = []
     sample_idx = 0
     for batch_pred in predictions:
         batch_size = batch_pred["coors"].shape[0]
+        rewards_dict = batch_pred.get("rewards", None)
         for i in range(batch_size):
             coors_atom37 = batch_pred["coors"][i]  # [n, 37, 3]
             residue_type = batch_pred["residue_type"][i]  # [n]
@@ -519,7 +523,84 @@ def save_motif_predictions(
             )
             pdb_paths.append(pdb_path)
 
-    return pdb_paths
+            row_data = {
+                "pdb_path": os.path.abspath(pdb_path),
+                "pdb_index": i,
+                "aatype": ",".join(residue_type.detach().cpu().numpy().astype(str)),
+            }
+            if rewards_dict is not None:
+                row_data["total_reward"] = rewards_dict[TOTAL_REWARD_KEY][i].float().detach().cpu().numpy()
+                for key, tensor in rewards_dict.items():
+                    if key != TOTAL_REWARD_KEY:
+                        row_data[key] = tensor[i].float().detach().cpu().numpy()
+            else:
+                row_data["total_reward"] = 0.0
+            if "metadata_tag" in batch_pred and i < len(batch_pred["metadata_tag"]):
+                row_data["metadata_tag"] = batch_pred["metadata_tag"][i]
+            rewards.append(row_data)
+
+    return pdb_paths, pd.DataFrame(rewards)
+
+
+def remap_motif_csv_for_search_replicas(motif_csv_path: str, metadata_tags: list | None) -> None:
+    """Rewrite a per-placement motif_info CSV into per-final-sample rows.
+
+    ``MotifFeatures`` writes one CSV row per dataset-level placement (indexed
+    0..nsamples-1) at dataset-setup time -- before search algorithms like
+    best-of-n/beam-search/fk-steering/mcts expand each placement into several
+    final samples. Search metadata tags follow the ``{prefix}_orig{s}...``
+    convention (see ``search_utils.make_initial_search_tags``), so the
+    original placement index can be recovered and used to duplicate/reorder
+    CSV rows to align with the final ``job_*_id_N`` sample order.
+
+    No-ops when the CSV doesn't exist, no tags carry an ``orig{N}`` marker,
+    or the final sample count doesn't exceed the CSV row count.
+
+    That last check matters: search algorithms that internally batch a run
+    into several sequential ``search()`` calls (e.g. single-pass generation
+    processing more samples than fit in one forward pass) reset their
+    ``orig{N}`` tag numbering *per batch* -- those tags are batch-local, not
+    global placement indices, and must not be used for remapping. Only
+    algorithms that genuinely expand each placement into multiple final
+    samples (best-of-n, beam-search, fk-steering, mcts) produce more final
+    samples than underlying CSV rows; that is the reliable signal that
+    remapping is actually needed and safe.
+    """
+    if not motif_csv_path or not os.path.exists(motif_csv_path) or not metadata_tags:
+        return
+
+    df = pd.read_csv(motif_csv_path)
+    if "sample_num" not in df.columns:
+        return
+
+    if len(metadata_tags) <= len(df):
+        return
+
+    orig_indices: list[int | None] = []
+    for tag in metadata_tags:
+        m = re.search(r"orig(\d+)", str(tag)) if tag else None
+        orig_indices.append(int(m.group(1)) if m else None)
+
+    if all(idx is None for idx in orig_indices):
+        return
+
+    new_rows = []
+    for final_idx, orig_idx in enumerate(orig_indices):
+        lookup_idx = orig_idx if orig_idx is not None else final_idx
+        match = df[df["sample_num"] == lookup_idx]
+        if len(match) == 0:
+            logger.warning(
+                f"remap_motif_csv_for_search_replicas: no CSV row for original sample {lookup_idx} "
+                f"(final sample {final_idx}); leaving unmapped."
+            )
+            continue
+        row = match.iloc[0].to_dict()
+        row["sample_num"] = final_idx
+        new_rows.append(row)
+
+    if new_rows:
+        pd.DataFrame(new_rows).to_csv(motif_csv_path, index=False)
+        logger.info(f"Remapped motif_info CSV for search replicas: {motif_csv_path}")
 
 
 def save_rewards_to_csv(df: pd.DataFrame, root_path: str, config_name: str, job_id: int) -> str:
@@ -734,7 +815,7 @@ def main(cfg):
                 job_id=job_id,
             )
     elif motif_cond:
-        pdb_paths = save_motif_predictions(
+        pdb_paths, reward_df = save_motif_predictions(
             root_path,
             predictions,
             job_id=job_id,
@@ -745,6 +826,19 @@ def main(cfg):
         motif_csv = f"./{task_name or ''}_motif_info.csv"
         if os.path.exists(motif_csv):
             shutil.copy(motif_csv, root_path)
+
+        remap_motif_csv_for_search_replicas(
+            motif_csv_path,
+            reward_df["metadata_tag"].tolist() if "metadata_tag" in reward_df.columns else None,
+        )
+
+        if len(reward_df) > 0:
+            csv_path = save_rewards_to_csv(
+                df=reward_df,
+                root_path=root_path,
+                config_name=config_name,
+                job_id=job_id,
+            )
     else:
         pdb_paths, reward_df = save_predictions(
             root_path,

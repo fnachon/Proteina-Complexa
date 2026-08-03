@@ -1,4 +1,12 @@
 motif_dict_cfg:
+  ChoE_AA:
+    contig_string: A21-57/15-30/A77-307
+    motif_pdb_path: /Users/florian/Documents/Science-Manips/ProteinDesign/ChoE/proteina-complexa/ChoE4design_min7.pdb
+    motif_only: False
+    motif_min_length: 283
+    motif_max_length: 298
+    segment_order: "A"
+    atom_selection_mode: "all_atom"
   1PRW_AA:
     contig_string: 5-20/A1-20/10-25/B1-20/5-20
     motif_pdb_path: ${oc.env:DATA_PATH}/motif_data_aa/1prw_aa.pdb

@@ -15,6 +15,31 @@ from proteinfoundation.utils.device_utils import get_best_torch_device
 
 hf_logging.set_verbosity_error()
 
+# Cache of loaded ESMFold (tokenizer, model, device) keyed by cache_dir, so repeated
+# calls to run_esmfold within the same process reuse the loaded model instead of
+# re-resolving/re-loading it from the HuggingFace cache on every call.
+_ESMFOLD_CACHE: dict[str, tuple] = {}
+
+
+def _get_esmfold_model(cache_dir: str | None) -> tuple:
+    key = cache_dir or ""
+    if key not in _ESMFOLD_CACHE:
+        tokenizer = AutoTokenizer.from_pretrained("facebook/esmfold_v1", cache_dir=cache_dir)
+        esm_model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", cache_dir=cache_dir)
+        folding_device = get_best_torch_device()
+        try:
+            esm_model = esm_model.to(folding_device)
+        except RuntimeError as e:
+            if folding_device.type == "mps":
+                logger.warning(f"ESMFold failed to initialize on MPS ({e}). Falling back to CPU.")
+                folding_device = torch.device("cpu")
+                esm_model = esm_model.to(folding_device)
+            else:
+                raise
+        esm_model.eval()
+        _ESMFOLD_CACHE[key] = (tokenizer, esm_model, folding_device)
+    return _ESMFOLD_CACHE[key]
+
 
 def create_individual_fasta_files(
     sequences: list[str],
@@ -87,18 +112,7 @@ def run_esmfold(
     if final_cache_dir:
         final_cache_dir = os.path.expanduser(final_cache_dir)
 
-    tokenizer = AutoTokenizer.from_pretrained("facebook/esmfold_v1", cache_dir=final_cache_dir)
-    esm_model = EsmForProteinFolding.from_pretrained("facebook/esmfold_v1", cache_dir=final_cache_dir)
-    folding_device = get_best_torch_device()
-    try:
-        esm_model = esm_model.to(folding_device)
-    except RuntimeError as e:
-        if folding_device.type == "mps":
-            logger.warning(f"ESMFold failed to initialize on MPS ({e}). Falling back to CPU.")
-            folding_device = torch.device("cpu")
-            esm_model = esm_model.to(folding_device)
-        else:
-            raise
+    tokenizer, esm_model, folding_device = _get_esmfold_model(final_cache_dir)
     logger.info(f"Running ESMFold on device: {folding_device}")
 
     # Run ESMFold

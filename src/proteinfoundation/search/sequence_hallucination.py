@@ -457,7 +457,8 @@ class SequenceHallucination:
 
                 coors = sample_prots["coors"][i]
                 residue_type = sample_prots["residue_type"][i]
-                chain_index = sample_prots["chain_index"][i]
+                chain_index_all = sample_prots.get("chain_index")
+                chain_index = chain_index_all[i] if chain_index_all is not None else None
                 res_mask = sample_prots["mask"][i].bool()
                 n = int(res_mask.sum().item())
 
@@ -597,30 +598,29 @@ class SequenceHallucination:
                     refined_coors_full[res_mask] = refined_coors
                     refined_residue_type_full[res_mask] = refined_residue_type
 
-                    refined_sample_prots.append(
-                        {
-                            "coors": refined_coors_full.unsqueeze(0),
-                            "residue_type": refined_residue_type_full.unsqueeze(0),
-                            # Keep original chain_index; ColabDesign uses
-                            # only chain A/B internally.
-                            "chain_index": chain_index.clone().unsqueeze(0),
-                        }
-                    )
+                    refined_sample = {
+                        "coors": refined_coors_full.unsqueeze(0),
+                        "residue_type": refined_residue_type_full.unsqueeze(0),
+                    }
+                    if chain_index is not None:
+                        # Keep original chain_index; ColabDesign uses only chain A/B internally.
+                        refined_sample["chain_index"] = chain_index.clone().unsqueeze(0)
+                    refined_sample_prots.append(refined_sample)
                     elapsed = time.time() - t0
                     logger.info(f"Refined sample {i + 1}/{bs} in {elapsed:.1f}s")
 
                 except Exception as exc:
                     elapsed = time.time() - t0
-                    logger.warning(
-                        f"Refinement failed for sample {i + 1}/{bs} after {elapsed:.1f}s, keeping original: {exc}"
+                    logger.exception(
+                        f"Refinement failed for sample {i + 1}/{bs} after {elapsed:.1f}s, keeping original: {exc!r}"
                     )
-                    refined_sample_prots.append(
-                        {
-                            "coors": coors.clone().unsqueeze(0),
-                            "residue_type": residue_type.clone().unsqueeze(0),
-                            "chain_index": chain_index.clone().unsqueeze(0),
-                        }
-                    )
+                    fallback_sample = {
+                        "coors": coors.clone().unsqueeze(0),
+                        "residue_type": residue_type.clone().unsqueeze(0),
+                    }
+                    if chain_index is not None:
+                        fallback_sample["chain_index"] = chain_index.clone().unsqueeze(0)
+                    refined_sample_prots.append(fallback_sample)
 
             refined = concat_dict_tensors(refined_sample_prots, dim=0)
 

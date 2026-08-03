@@ -77,6 +77,7 @@ samples_baselines/*
 unit_tests/output/*
 unit_tests/scratch/*
 evaluation_results/*
+rf3_outputs/*
 community_models/ckpts/*
 *.bak
 .bash_history

@@ -16,8 +16,8 @@
 #   Multi-size: 7MRX_AA_60/85/128, 5TRV_AA_SHORT/MED/LONG, 6E6R_AA_SHORT/MED/LONG
 
 defaults:
-  - pipeline/motif/motif_generate@generation
-  - pipeline/motif/motif_evaluate@_global_
+  - pipeline/motif/idx_motif_generate@generation
+  - pipeline/motif/idx_motif_evaluate@_global_
   - pipeline/motif/motif_analyze@_global_
   - _self_
 

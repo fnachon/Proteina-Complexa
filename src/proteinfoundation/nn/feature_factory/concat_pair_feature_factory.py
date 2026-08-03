@@ -172,9 +172,6 @@ class ConcatPairFeaturesFactory(torch.nn.Module):
             self.upper_right_optional_ca = CrossSequenceOptionalCaPairDistancesPairFeat(
                 coords1_key="coords_nm", coords2_key="x_motif", **kwargs
             )
-            self.upper_right_chain = CrossSequenceChainIndexPairFeat(
-                chain1_key="chains", chain2_key="motif_chains", **kwargs
-            )
 
             # Lower left: NOT COMPUTED - just transpose of upper right for efficiency!
 
@@ -199,9 +196,6 @@ class ConcatPairFeaturesFactory(torch.nn.Module):
             self.lower_right_optional_ca = CrossSequenceOptionalCaPairDistancesPairFeat(
                 coords1_key="x_motif", coords2_key="x_motif", **kwargs
             )
-            self.lower_right_chain = CrossSequenceChainIndexPairFeat(
-                chain1_key="motif_chains", chain2_key="motif_chains", **kwargs
-            )
 
             # Calculate total input dimension for cross-sequence features
             total_cross_seq_dim = (
@@ -209,7 +203,6 @@ class ConcatPairFeaturesFactory(torch.nn.Module):
                 + self.upper_right_xt_dist.get_dim()
                 + self.upper_right_xsc_dist.get_dim()
                 + self.upper_right_optional_ca.get_dim()
-                + self.upper_right_chain.get_dim()
             )
 
             # Create projection layers to match original pair representation dimension
@@ -341,6 +334,9 @@ class ConcatPairFeaturesFactory(torch.nn.Module):
                 )
             return orig_pair_rep + 0 * self.ln_out(self.linear_out(blank))[None, None, None, :]
 
+        if self.enable_motif:
+            return self.motif_forward(batch, orig_pair_rep, orig_seq_mask)
+
         if self.enable_ligand:
             return self.ligand_forward(batch, orig_pair_rep, orig_seq_mask)
 
@@ -395,6 +391,101 @@ class ConcatPairFeaturesFactory(torch.nn.Module):
                 lower_right_xt_dist,
                 lower_right_chain,
                 lower_right_hotspots,
+            ],
+            dim=-1,
+        )
+
+        # Apply linear projection to lower right features
+        lower_right_projected = self.ln_out(
+            self.linear_out(lower_right_combined)
+        )  # [b, n_concat, n_concat, dim_pair_out]
+
+        # Verify dimension consistency with original pair representation
+        if self.dim_pair_out != pair_dim:
+            raise ValueError(
+                f"Configured output dimension {self.dim_pair_out} does not match original pair representation dimension {pair_dim}. Please set dim_pair_out={pair_dim} in config."
+            )
+
+        concat_mask = batch[self.mask_key].sum(dim=-1).bool()  # [b, n_concat]
+        # [b, n_orig, n_orig, pair_dim], [b, n_concat, n_orig, pair_dim] -> [b, pad_len, n_orig, pair_dim]
+        orig_pair_rep = orig_pair_rep * orig_seq_mask[:, :, None, None] * orig_seq_mask[:, None, :, None]
+        lower_left_projected = lower_left_projected * concat_mask[:, :, None, None] * orig_seq_mask[:, None, :, None]
+        extended_pair_rep_left, extended_mask = concat_padded_tensor(
+            a=orig_pair_rep,
+            b=lower_left_projected,
+            mask_a=orig_seq_mask,
+            mask_b=concat_mask,
+        )  # [b, pad_len, n_orig, pair_dim], [b, pad_len], pad_len = max(n_i + m_i)
+
+        # [b, n_orig, n_concat, pair_dim], [b, n_concat, n_concat, pair_dim] -> [b, pad_len, n_concat, pair_dim]
+        upper_right_projected = upper_right_projected * orig_seq_mask[:, :, None, None] * concat_mask[:, None, :, None]
+        lower_right_projected = lower_right_projected * concat_mask[:, :, None, None] * concat_mask[:, None, :, None]
+        extended_pair_rep_right, extended_mask = concat_padded_tensor(
+            a=upper_right_projected,
+            b=lower_right_projected,
+            mask_a=orig_seq_mask,
+            mask_b=concat_mask,
+        )  # [b, pad_len, n_concat, pair_dim], [b, pad_len], pad_len = max(n_i + m_i)
+
+        # [b, n_orig, pad_len, pair_dim], [b, n_concat, pad_len, pair_dim] -> [b, pad_len, pad_len, pair_dim]
+        extended_pair_rep, extended_mask = concat_padded_tensor(
+            a=extended_pair_rep_left.transpose(1, 2),
+            b=extended_pair_rep_right.transpose(1, 2),
+            mask_a=orig_seq_mask,
+            mask_b=concat_mask,
+        )
+        extended_pair_rep = extended_pair_rep.transpose(1, 2)  # [b, pad_len, pad_len, pair_dim], [b, pad_len]
+        extended_pair_rep = extended_pair_rep * extended_mask[:, :, None, None] * extended_mask[:, None, :, None]
+
+        return extended_pair_rep
+
+    def motif_forward(self, batch, orig_pair_rep, orig_seq_mask):
+        """Forward pass for the motif branch (seq_sep + xt_dist + xsc_dist + optional_ca, no chain/hotspot feats)."""
+        b, n_orig, _, pair_dim = orig_pair_rep.shape
+        orig_pair_rep.device
+
+        batch_with_chains = self._prepare_batch_with_chains(batch)
+
+        # Get dimensions by computing one feature
+        sample_feat = self.upper_right_xt_dist(batch_with_chains)
+        n_concat = sample_feat.shape[
+            2
+        ]  # motif sequence length (cross-sequence features are [b, n_orig, n_motif, dim])
+
+        # Upper right: [b, n_orig, n_concat, total_dim]
+        upper_right_seq_sep = self.upper_right_seq_sep(batch_with_chains)
+        upper_right_xt_dist = self.upper_right_xt_dist(batch_with_chains)
+        upper_right_xsc_dist = self.upper_right_xsc_dist(batch_with_chains)
+        upper_right_optional_ca = self.upper_right_optional_ca(batch_with_chains)
+        upper_right_combined = torch.cat(
+            [
+                upper_right_seq_sep,
+                upper_right_xt_dist,
+                upper_right_xsc_dist,
+                upper_right_optional_ca,
+            ],
+            dim=-1,
+        )
+
+        # Apply linear projection to upper right features
+        upper_right_projected = self.ln_out(
+            self.linear_out(upper_right_combined)
+        )  # [b, n_orig, n_concat, dim_pair_out]
+
+        # Lower left: [b, n_concat, n_orig, dim_pair_out] - transpose of upper right
+        lower_left_projected = upper_right_projected.transpose(1, 2)
+
+        # Lower right: [b, n_concat, n_concat, total_dim]
+        lower_right_seq_sep = self.lower_right_seq_sep(batch_with_chains)
+        lower_right_xt_dist = self.lower_right_xt_dist(batch_with_chains)
+        lower_right_xsc_dist = self.lower_right_xsc_dist(batch_with_chains)
+        lower_right_optional_ca = self.lower_right_optional_ca(batch_with_chains)
+        lower_right_combined = torch.cat(
+            [
+                lower_right_seq_sep,
+                lower_right_xt_dist,
+                lower_right_xsc_dist,
+                lower_right_optional_ca,
             ],
             dim=-1,
         )

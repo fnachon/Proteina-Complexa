@@ -2936,6 +2936,7 @@ def main(cfg: DictConfig) -> None:
             "ligand_binder",
             "motif_protein_binder",
             "motif_ligand_binder",
+            "monomer_motif",
         ]:
             try:
                 generation_cfg = cfg.get("generation", {})

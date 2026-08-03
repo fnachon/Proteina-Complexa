@@ -123,7 +123,12 @@ def main(cfg):
             reward_files.append(os.path.join(root_path, file))
 
     if not reward_files:
-        raise ValueError("No reward files found!")
+        logger.warning(
+            f"No reward files found in {root_path} — no reward model was configured for this "
+            "generation run, so there is nothing to filter by. Skipping filter step; all "
+            "generated samples remain in place for evaluate/analyze."
+        )
+        return
 
     logger.info(f"Found {len(reward_files)} reward file(s) to process")
 
@@ -165,6 +170,8 @@ def main(cfg):
     except (AttributeError, KeyError):
         default_samples = 1000
     total_samples = filter_cfg.get("filter_samples_limit", default_samples)
+    if total_samples is None:
+        total_samples = len(combined_rewards)  # null = keep all
     reward_threshold = filter_cfg.get("reward_threshold", None)
     delete_files = filter_cfg.get("delete_non_top_n_samples", False)
     logger.info("Filtering configuration:")
